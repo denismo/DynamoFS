@@ -182,6 +182,24 @@ class DynamoFS(LoggingMixIn, Operations):
         except DynamoDBKeyNotFoundError:
             raise FuseOSError(ENOENT)
 
+    def __getItemOrNone(self, path):
+        name=os.path.basename(path)
+        if name == "":
+            name="/"
+        try:
+            return self.table.get_item(os.path.dirname(path), name, attributes_to_get=['name'])
+        except DynamoDBKeyNotFoundError:
+            return None
+
+    def __isFile(self, path):
+        item = self.__getItemOrNone(path)
+        if item != None:
+            return (item["st_mode"] & S_IFREG) == S_IFREG
+
+    def __isDirectory(self, path):
+        item = self.__getItemOrNone(path)
+        if item != None:
+            return (item["st_mode"] & S_IFDIR) == S_IFDIR
 
 if __name__ == '__main__':
     if len(argv) != 4:
