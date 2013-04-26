@@ -203,7 +203,7 @@ class DynamoFS(LoggingMixIn, Operations):
 
 if __name__ == '__main__':
     if len(argv) != 4:
-        print('usage: %s <region> <dynamo table> <mountpoint>' % argv[0])
+        print('usage: %s <region> <dynamo table> <mount point>' % argv[0])
         exit(1)
 
     fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True)
