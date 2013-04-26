@@ -23,7 +23,7 @@ setup(
     author_email = 'denismo@yahoo.com',
     maintainer = 'Denis Mikhalkin',
     maintainer_email = 'denismo@yahoo.com',
-    license = 'Apache 2.0',
+    license = 'Apache License, Version 2.0',
     py_modules=['dynamofs'],
     url = 'https://github.com/denismo/dynamo-fuse',
 
@@ -37,7 +37,7 @@ setup(
 
     classifiers = [
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: Apache 2.0',
+        'License :: OSI Approved :: Apache License, Version 2.0',
         'Operating System :: POSIX',
         'Operating System :: Unix',
         'Programming Language :: Python :: 2',

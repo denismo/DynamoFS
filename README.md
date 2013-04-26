@@ -18,6 +18,7 @@ Usage
 2. Create an AWS Dynamo DB table in the region of your choice. The table must have Hash key named `path` and Range key named `name` (case matters, both Strings)
 
 3. Define environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. At the moment only the configuration by environment variables is supported.
+The user with these keys must have read/write access to the specified AWS Dynamo DB table.
 
 4. Execute python command to mount the filesystem:
 
@@ -40,4 +41,9 @@ so any practical usage is not recommended. Not all commands are implemented at t
 - chown
 - mv
 
-In summary, no file reading/writing operations have been implemented. Also, the behavior during concurrent access to the same files or directories is not defined.
+As you can see no file reading/writing operations have been implemented. Also, the behavior during concurrent access to the same files or directories is not defined.
+
+License
+=======
+
+[Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0)
