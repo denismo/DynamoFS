@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from __future__ import with_statement
+import dynamofile
 
 __author__ = 'Denis Mikhalkin'
 
@@ -38,7 +39,7 @@ if not hasattr(__builtins__, 'bytes'):
 
 BLOCK_SIZE = 63000 # 64K minus 1K for path-name and about 1K for all other fields
 
-class DynamoFS(LoggingMixIn, Operations):
+class DynamoFS(Operations):
     def __init__(self, region, tableName):
         self.log = logging.getLogger("dynamo-fuse")
         self.tableName = tableName
@@ -131,7 +132,7 @@ class DynamoFS(LoggingMixIn, Operations):
         if old == new: return
         # TODO Check permissions in directories
         item = self.getItemOrThrow(old)
-        newItem = self.getItemOrNone(new)
+        newItem = self.getItemOrNone(new, attrs=["st_mode"])
         if self.isDirectory(newItem):
             item.hash_key = new
             item.save()
@@ -234,7 +235,7 @@ class DynamoFS(LoggingMixIn, Operations):
 
     def unlink(self, path):
         self.log.debug("unlink(%s)", path)
-        self.getItemOrThrow(path, attrs=[]).delete()
+        self.getItemOrThrow(path, attrs=['name']).delete()
 
         items = self.table.query(path, attributes_to_get=['name'])
         # TODO Pagination
@@ -247,30 +248,9 @@ class DynamoFS(LoggingMixIn, Operations):
     # TODO Update modification time
     def write(self, path, data, offset, fh):
         self.log.debug("write(%s, len=%d, offset=%d)", path, len(data), offset)
-        startBlock = offset / BLOCK_SIZE
-        endBlock = (offset + len(data)) / BLOCK_SIZE
-        self.log.debug("write start=%d, last=%d", startBlock, endBlock)
-        for block in range(startBlock, endBlock+1):
-            item = self.getItemOrNone(os.path.join(path, str(block)), attrs=["data"])
-            if item is None:
-                self.log.debug("write block %d is None", block)
-                item = self.table.new_item(attrs={
-                    "path": path,
-                    "name": str(block),
-                })
-            dataSlice = data[(block - startBlock) * BLOCK_SIZE:(block - startBlock + 1) * BLOCK_SIZE]
-            self.log.debug("write block %d slice length %d", block, len(dataSlice))
-            if "data" in item:
-                self.log.debug("write block %d has data", block)
-                startOffset = offset if block == startBlock else 0
-                item['data'] = item['data'][0:startOffset] + dataSlice + item['data'][startOffset + len(dataSlice):]
-            else:
-                # TODO What if offset is not 0 and there are no data?
-                self.log.debug("write block %d has NO data", block)
-                if offset:
-                    self.log.warn("write with offset(%d) != 0 and no data in the block %d", offset, block)
-                item['data'] = dataSlice
-            item.save()
+
+        file = dynamofile.DynamoFile(path, self)
+        file.write(data, offset) # throws
 
         item = self.getItemOrThrow(path, attrs=["st_size"])
         self.log.debug("write updating item st_size to %d", max(item["st_size"], offset + len(data)))
@@ -281,29 +261,9 @@ class DynamoFS(LoggingMixIn, Operations):
 
     def read(self, path, size, offset, fh):
         self.log.debug("read(%s, size=%d, offset=%d)", path, size, offset)
-        startBlock = offset / BLOCK_SIZE
-        endBlock = (offset + size) / BLOCK_SIZE
-        data = cStringIO.StringIO()
-        try:
-            self.log.debug("read blocks [%d .. %d]", startBlock, endBlock)
-            for block in range(startBlock, endBlock+1):
-                item = self.getItemOrNone(os.path.join(path, str(block)), attrs=["data"])
-                if item is None:
-                    self.log.debug("read block %d does not exist", block)
-                    break
-                if not "data" in item:
-                    self.log.debug("read block %d has no data", block)
-                    raise FuseOSError(EIO)
-                itemData = item["data"]
-                writeLen = min(size, BLOCK_SIZE, len(itemData))
-                self.log.debug("read block %d has %d data, writing %d", block, len(itemData), writeLen)
-                startOffset = offset if block == startBlock else 0
-                data.write(itemData[startOffset:startOffset + writeLen])
-                size -= writeLen
 
-            return data.getvalue()
-        finally:
-            data.close()
+        file = dynamofile.DynamoFile(path, self)
+        return file.read(offset, size) # throws
 
     def link(self, target, source):
         self.log.debug("link(%s, %s)", target, source)
@@ -356,15 +316,16 @@ class DynamoFS(LoggingMixIn, Operations):
         except DynamoDBKeyNotFoundError:
             return None
 
-    def isFile(self, path):
-        item = self.getItemOrNone(path, attrs=["st_mode"])
+    def isFile(self, item):
         if item is not None:
             return (item["st_mode"] & S_IFREG) == S_IFREG
 
-    def isDirectory(self, path):
-        item = self.getItemOrNone(path, attrs=["st_mode"])
+    def isDirectory(self, item):
         if item is not None:
             return (item["st_mode"] & S_IFDIR) == S_IFDIR
+
+    def newItem(self, attrs):
+        return self.table.new_item(attrs=attrs)
 
 if __name__ == '__main__':
     if len(argv) != 4:
@@ -373,5 +334,7 @@ if __name__ == '__main__':
 
     logging.basicConfig(filename='/var/log/dynamo-fuse.log', filemode='w')
     logging.getLogger("dynamo-fuse").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-file").setLevel(logging.DEBUG)
+    logging.getLogger("fuse.log-mixin").setLevel(logging.INFO)
 
     fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True)
