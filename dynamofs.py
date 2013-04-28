@@ -19,12 +19,14 @@ import dynamofile
 
 __author__ = 'Denis Mikhalkin'
 
-from errno import EACCES, ENOENT, EINVAL, EEXIST, EOPNOTSUPP, EIO
+from errno import *
 from os.path import realpath
 from sys import argv, exit
 from threading import Lock
 import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
+from boto.exception import BotoServerError, BotoClientError
+from boto.exception import DynamoDBResponseError
 from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR
 from boto.dynamodb.types import Binary
 from time import time
@@ -42,7 +44,24 @@ if not hasattr(__builtins__, 'bytes'):
 BLOCK_SIZE = 32768 # 64K minus 1K for path-name and about 1K for all other fields
 ALL_ATTRS = {}
 
-class DynamoFS(Operations):
+class BotoExceptionMixin:
+    log = logging.getLogger("dynamo-fuse")
+    def __call__(self, op, path, *args):
+        try:
+            ret = getattr(self, op)(path, *args)
+            self.log.debug("<- %s: %s", op, repr(ret))
+            return ret
+        except BotoServerError, e:
+            self.log.error("<- %s: %s", op, repr(e))
+            raise FuseOSError(EIO)
+        except BotoClientError, e:
+            self.log.error("<- %s: %s", op, repr(e))
+            raise FuseOSError(EIO)
+        except DynamoDBResponseError, e:
+            self.log.error("<- %s: %s", op, repr(e))
+            raise FuseOSError(EIO)
+
+class DynamoFS(BotoExceptionMixin, Operations):
     def __init__(self, region, tableName):
         self.log = logging.getLogger("dynamo-fuse")
         self.tableName = tableName
@@ -132,7 +151,7 @@ class DynamoFS(Operations):
         self.log.debug("rmdir(%s)", path)
 
         item = self.getItemOrThrow(path, attrs=['st_mode'])
-        if self.isDirectory(item):
+        if not self.isDirectory(item):
             raise FuseOSError(EINVAL)
 
         item.delete()
@@ -162,7 +181,9 @@ class DynamoFS(Operations):
 
     def symlink(self, target, source):
         self.log.debug("symlink(%s, %s)", target, source)
-        # TODO: Verify does not exist
+        if len(target) > 1024:
+            raise FuseOSError(ENAMETOOLONG)
+            # TODO: Verify does not exist
         # TODO: Update parent directory time
         name = os.path.basename(target)
         if name == "":
@@ -175,10 +196,12 @@ class DynamoFS(Operations):
         }
         item = self.table.new_item(attrs=attrs)
         item.put()
-        return self.allocId()
+        return 0
 
     def create(self, path, mode, fh=None):
         self.log.debug("create(%s, %d)", path, mode)
+        if len(path) > 1024:
+            raise FuseOSError(ENAMETOOLONG)
         # TODO: Verify does not exist
         # TODO: Update parent directory time
         l_time = int(time())
@@ -280,6 +303,8 @@ class DynamoFS(Operations):
 
     def link(self, target, source):
         self.log.debug("link(%s, %s)", target, source)
+        if len(target) > 1024:
+            raise FuseOSError(ENAMETOOLONG)
         raise FuseOSError(EOPNOTSUPP)
 
     def lock(self, path, fip, cmd, lock):
@@ -351,3 +376,5 @@ if __name__ == '__main__':
     logging.getLogger("fuse.log-mixin").setLevel(logging.INFO)
 
     fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True)
+
+
