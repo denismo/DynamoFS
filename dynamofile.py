@@ -2,7 +2,7 @@ from dynamofs import BLOCK_SIZE
 
 __author__ = 'Denis Mikhalkin'
 
-from errno import EACCES, ENOENT, EINVAL, EEXIST, EOPNOTSUPP, EIO
+from errno import EACCES, ENOENT, EINVAL, EEXIST, EOPNOTSUPP, EIO, EAGAIN
 from os.path import realpath
 from threading import Lock
 import boto.dynamodb
@@ -79,3 +79,38 @@ class DynamoFile:
             return data.getvalue()
         finally:
             data.close()
+
+    def exclusiveLock(self):
+        return DynamoLock(self.path, self.accessor)
+
+
+class DynamoLock:
+    log = logging.getLogger("dynamo-fuse-lock")
+
+    def __init__(self, path, accessor):
+        self.path = path
+        self.accessor = accessor
+
+    def __enter__(self):
+        log.debug("Acquiring exclusive lock on %s", self.path)
+        self.accessor.new_item(attrs={
+            "path": self.path,
+            "name": "ex_lock"
+        })
+        item.add_attribute("ex_lock", 1)
+        res = item.save(return_values="ALL_NEW")
+        if res["Attributes"]["ex_lock"] == 1:
+            # Got the lock
+            return self.accessor.getItemOrThrow(self.path, attrs=None)
+        else:
+            # TODO Wait
+            raise FuseOSError(EAGAIN)
+
+    def __exit__(self):
+        log.debug("Releasing exclusive lock on %s", path)
+        self.accessor.new_item(attrs={
+            "path": self.path,
+            "name": "ex_lock"
+        })
+        item.add_attribute("ex_lock", -1)
+        item.save()

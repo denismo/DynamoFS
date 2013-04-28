@@ -26,6 +26,7 @@ from threading import Lock
 import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR
+from boto.dynamodb.types import Binary
 from time import time
 from boto.dynamodb.condition import EQ, GT
 import os
@@ -75,7 +76,7 @@ class DynamoFS(Operations):
         return 0
 
     def open(self, path, flags):
-        self.log.debug("open(%s, flags=%x)", path, flags)
+        self.log.debug("open(%s, flags=0x%x)", path, flags)
         # TODO read/write locking? Permission check?
         self.checkFileExists(path)
         return self.allocId()
@@ -229,18 +230,19 @@ class DynamoFS(Operations):
 
         lastBlock = length / BLOCK_SIZE
 
-        items = self.table.query(hash_key=path, range_key_condition=GT(str(lastBlock)), attributes_to_get=['name'])
+        items = self.table.query(hash_key=path, range_key_condition=(GT(str(lastBlock)) if length else None), attributes_to_get=['name', "path"])
         # TODO Pagination
         for entry in items:
             entry.delete()
 
         # TODO Can optimize if length is stored as a field
-        lastItem = self.getItemOrNone(os.path.join(path, str(lastBlock)), attrs=["data"])
-        if lastItem is not None and "data" in lastItem:
-            lastItem['data'] = lastItem['data'][0:(length % BLOCK_SIZE)]
-            lastItem.save()
+        if length:
+            lastItem = self.getItemOrNone(os.path.join(path, str(lastBlock)), attrs=["data", "name", "path"])
+            if lastItem is not None and "data" in lastItem:
+                lastItem['data'] = Binary(lastItem['data'].value[0:(length % BLOCK_SIZE)])
+                lastItem.save()
 
-        item = self.getItemOrThrow(path, attrs=['st_size'])
+        item = self.getItemOrThrow(path, attrs=['st_size', "name", "path"])
         item['st_size'] = length
         item.save()
 
@@ -281,7 +283,8 @@ class DynamoFS(Operations):
         raise FuseOSError(EOPNOTSUPP)
 
     def lock(self, path, fip, cmd, lock):
-        self.log.debug("lock(%s, fip=%x, cmd=%x, lock=%x)", path, fip, cmd, lock)
+        self.log.debug("lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start, lock.l_len, lock.l_type)
+
         # Lock is optional if no concurrent access is expected
         # raise FuseOSError(EOPNOTSUPP)
 
