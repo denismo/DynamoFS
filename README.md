@@ -40,10 +40,12 @@ so any practical usage is not recommended. Not all commands are implemented at t
 - chmod
 - chown
 - mv
-- <truncate>
+- truncate
 - rm
+- cp
+- read/write files
 
-As you can see no file reading/writing operations have been implemented. Also, the behavior during concurrent access to the same files or directories is not defined.
+Note that the behavior during concurrent access to the same files or directories is not defined at the moment. Locking is not supported yet.
 
 License
 =======
