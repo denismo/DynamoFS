@@ -22,7 +22,7 @@ The user with these keys must have read/write access to the specified AWS Dynamo
 
 4. Execute python command to mount the filesystem:
 
-        python dynamofs <aws region> <dynamo table> <mount point>
+        python dynamofs.py <aws region> <dynamo table> <mount point>
 
    This will mount the table to the mount point. After that you will be able to execute normal Linux file commands, such as "ls" or "mkdir".
 
@@ -30,7 +30,7 @@ Limitations
 ===========
 
 **Note: This project is in its early R&D stage. Various designs and implementation strategies are being tried for file system operations
-so any practical usage is not recommended. Not all commands are implemented at the moment. The following has been implemented:**
+so any practical usage is not recommended. Not all commands are implemented at the moment. The following has been implemented to some extent:**
 
 - ls
 - mkdir
@@ -40,6 +40,8 @@ so any practical usage is not recommended. Not all commands are implemented at t
 - chmod
 - chown
 - mv
+- <truncate>
+- rm
 
 As you can see no file reading/writing operations have been implemented. Also, the behavior during concurrent access to the same files or directories is not defined.
 
