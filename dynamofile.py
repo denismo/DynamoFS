@@ -10,6 +10,7 @@ from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from stat import S_IFDIR, S_IFLNK, S_IFREG
 from time import time
 from boto.dynamodb.condition import EQ, GT
+from boto.dynamodb.types import Binary
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 import logging
@@ -28,7 +29,7 @@ class DynamoFile:
 
     def write(self, data, offset):
         startBlock = offset / BLOCK_SIZE
-        endBlock = (offset + len(data)) / BLOCK_SIZE
+        endBlock = (offset + len(data)-1) / BLOCK_SIZE
         initialBlockOffset = BLOCK_SIZE - (offset % BLOCK_SIZE)
         blockOffset = 0
         self.log.debug("write start=%d, last=%d, initial offset %d", startBlock, endBlock, initialBlockOffset)
@@ -42,20 +43,21 @@ class DynamoFile:
                     })
             dataSlice = data[0:initialBlockOffset] if block == startBlock else \
                 data[blockOffset: blockOffset + BLOCK_SIZE]
-            blockOffset += len(dataSlice)
             self.log.debug("write block %d slice length %d from offset %d", block, len(dataSlice), blockOffset)
+            blockOffset += len(dataSlice)
             if "data" in item:
                 self.log.debug("write block %d has data", block)
+                itemData = item["data"].value
                 startOffset = (offset % BLOCK_SIZE) if block == startBlock else 0
-                item['data'] = item['data'][0:startOffset] + dataSlice + item['data'][startOffset + len(dataSlice):]
+                item['data'] = Binary(itemData[0:startOffset] + dataSlice + itemData[startOffset + len(dataSlice):])
             else:
                 self.log.debug("write block %d has NO data", block)
-                item['data'] = dataSlice
+                item['data'] = Binary(dataSlice)
             item.save()
 
     def read(self, offset, size):
         startBlock = offset / BLOCK_SIZE
-        endBlock = (offset + size) / BLOCK_SIZE
+        endBlock = (offset + size-1) / BLOCK_SIZE
         data = cStringIO.StringIO()
         try:
             self.log.debug("read blocks [%d .. %d]", startBlock, endBlock)
@@ -67,7 +69,7 @@ class DynamoFile:
                 if not "data" in item:
                     self.log.debug("read block %d has no data", block)
                     raise FuseOSError(EIO)
-                itemData = item["data"]
+                itemData = item["data"].value
                 writeLen = min(size, BLOCK_SIZE, len(itemData))
                 startOffset = (offset % BLOCK_SIZE) if block == startBlock else 0
                 self.log.debug("read block %d has %d data, writing %d from %d", block, len(itemData), writeLen, startOffset)

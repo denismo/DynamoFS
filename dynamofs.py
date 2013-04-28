@@ -25,7 +25,7 @@ from sys import argv, exit
 from threading import Lock
 import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
-from stat import S_IFDIR, S_IFLNK, S_IFREG
+from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR
 from time import time
 from boto.dynamodb.condition import EQ, GT
 import os
@@ -33,11 +33,13 @@ from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 import logging
 import sys
 import cStringIO
+import itertools
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-BLOCK_SIZE = 63000 # 64K minus 1K for path-name and about 1K for all other fields
+BLOCK_SIZE = 32768 # 64K minus 1K for path-name and about 1K for all other fields
+ALL_ATTRS = {}
 
 class DynamoFS(Operations):
     def __init__(self, region, tableName):
@@ -46,6 +48,7 @@ class DynamoFS(Operations):
         self.conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
             aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
         self.table = self.conn.get_table(tableName)
+        self.counter = itertools.count()
         self.__createRoot()
 
     def init(self, conn):
@@ -69,6 +72,7 @@ class DynamoFS(Operations):
         item['st_uid'] = uid
         item['st_gid'] = gid
         item.save()
+        return 0
 
     def open(self, path, flags):
         self.log.debug("open(%s, flags=%x)", path, flags)
@@ -91,7 +95,12 @@ class DynamoFS(Operations):
 
     def getattr(self, path, fh=None):
         self.log.debug("getattr(%s)", path)
-        return self.checkFileExists(path)
+        item = self.getItemOrThrow(path, attrs=None)
+        if self.isFile(item):
+            if not "st_blksize" in item:
+                item["st_blksize"] = BLOCK_SIZE
+            item["st_blocks"] = (item["st_size"] + item["st_blksize"]-1)/item["st_blksize"]
+        return item
 
     def opendir(self, path):
         self.log.debug("opendir(%s)", path)
@@ -122,7 +131,7 @@ class DynamoFS(Operations):
         self.log.debug("rmdir(%s)", path)
 
         item = self.getItemOrThrow(path, attrs=['st_mode'])
-        if (item["st_mode"] & S_IFDIR) != S_IFDIR:
+        if self.isDirectory(item):
             raise FuseOSError(EINVAL)
 
         item.delete()
@@ -157,9 +166,11 @@ class DynamoFS(Operations):
         name = os.path.basename(target)
         if name == "":
             name = "/"
+        l_time = int(time())
         attrs = {'name': name, 'path': os.path.dirname(target),
                  'st_mode': S_IFLNK | 0777, 'st_nlink': 1,
-                 'symlink': source
+                 'symlink': source, 'st_size': 0, 'st_ctime': l_time,
+                 'st_mtime': l_time, 'st_atime': l_time
         }
         item = self.table.new_item(attrs=attrs)
         item.put()
@@ -176,7 +187,7 @@ class DynamoFS(Operations):
         attrs = {'name': name, 'path': os.path.dirname(path),
                  'st_mode': mode, 'st_nlink': 1,
                  'st_size': 0, 'st_ctime': l_time, 'st_mtime': l_time,
-                 'st_atime': l_time}
+                 'st_atime': l_time, 'st_blksize': BLOCK_SIZE}
         if mode & S_IFDIR == 0:
             mode |= S_IFREG
             attrs["mode"] = mode
@@ -235,9 +246,9 @@ class DynamoFS(Operations):
 
     def unlink(self, path):
         self.log.debug("unlink(%s)", path)
-        self.getItemOrThrow(path, attrs=['name']).delete()
+        self.getItemOrThrow(path, attrs=['name', 'path']).delete()
 
-        items = self.table.query(path, attributes_to_get=['name'])
+        items = self.table.query(path, attributes_to_get=['name', 'path'])
         # TODO Pagination
         for entry in items:
             entry.delete()
@@ -285,10 +296,11 @@ class DynamoFS(Operations):
         return self.table.item_count
 
     def allocId(self):
-        idItem = self.table.new_item(attrs={'name': 'counter', 'path': 'global'})
-        idItem.add_attribute("value", 1)
-        res = idItem.save(return_values="ALL_NEW")
-        return res["Attributes"]["value"]
+#        idItem = self.table.new_item(attrs={'name': 'counter', 'path': 'global'})
+#        idItem.add_attribute("value", 1)
+#        res = idItem.save(return_values="ALL_NEW")
+#        return res["Attributes"]["value"]
+        return self.counter.next()
 
     def checkFileDirExists(self, filepath):
         self.checkFileExists(os.path.dirname(filepath))
@@ -296,10 +308,8 @@ class DynamoFS(Operations):
     def checkFileExists(self, filepath):
         return self.getItemOrThrow(filepath, attrs=[])
 
-    def getItemOrThrow(self, filepath, attrs=None):
+    def getItemOrThrow(self, filepath, attrs=['name']):
         name = os.path.basename(filepath)
-        if attrs is None:
-            attrs = ['name']
         if name == "":
             name = "/"
         try:
@@ -318,11 +328,11 @@ class DynamoFS(Operations):
 
     def isFile(self, item):
         if item is not None:
-            return (item["st_mode"] & S_IFREG) == S_IFREG
+            return S_ISREG(item["st_mode"])
 
     def isDirectory(self, item):
         if item is not None:
-            return (item["st_mode"] & S_IFDIR) == S_IFDIR
+            return S_ISDIR(item["st_mode"])
 
     def newItem(self, attrs):
         return self.table.new_item(attrs=attrs)
