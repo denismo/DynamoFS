@@ -92,23 +92,27 @@ class DynamoLock:
         self.accessor = accessor
 
     def __enter__(self):
-        log.debug("Acquiring exclusive lock on %s", self.path)
-        self.accessor.new_item(attrs={
+        self.log.debug("Acquiring exclusive lock on %s", self.path)
+        item = self.accessor.newItem(attrs={
             "path": self.path,
             "name": "ex_lock"
         })
         item.add_attribute("ex_lock", 1)
         res = item.save(return_values="ALL_NEW")
+        self.log.debug("Lock result: %s", repr(res))
         if res["Attributes"]["ex_lock"] == 1:
             # Got the lock
-            return self.accessor.getItemOrThrow(self.path, attrs=None)
+            self.log.debug("Got the lock on %s", self.path)
+            pass
         else:
             # TODO Wait
+            self.log.debug("CANNOT lock %s, counter %d ", self.path, res["Attributes"]["ex_lock"])
+            self.__exit__()
             raise FuseOSError(EAGAIN)
 
-    def __exit__(self):
-        log.debug("Releasing exclusive lock on %s", path)
-        self.accessor.new_item(attrs={
+    def __exit__(self, t, v, tb):
+        self.log.debug("Releasing exclusive lock on %s", self.path)
+        item = self.accessor.newItem(attrs={
             "path": self.path,
             "name": "ex_lock"
         })

@@ -42,7 +42,7 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 BLOCK_SIZE = 32768 # 64K minus 1K for path-name and about 1K for all other fields
-ALL_ATTRS = {}
+ALL_ATTRS = None
 
 class BotoExceptionMixin:
     log = logging.getLogger("dynamo-fuse")
@@ -104,14 +104,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("utimens(%s)", path)
         now = int(time())
         atime, mtime = times if times else (now, now)
-        try:
-            item = self.table.get_item(os.path.dirname(path), name)
-        except DynamoDBKeyNotFoundError:
-            raise FuseOSError(ENOENT)
-        else:
-            item['st_atime'] = atime
-            item['st_mtime'] = mtime
-            item.save()
+        item = self.getItemOrThrow(path, attrs=["name", "path", "st_atime", "st_mtime"])
+        item['st_atime'] = atime
+        item['st_mtime'] = mtime
+        item.save()
 
     def getattr(self, path, fh=None):
         self.log.debug("getattr(%s)", path)
@@ -159,18 +155,38 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def rename(self, old, new):
         self.log.debug("rename(%s, %s)", old, new)
         if old == new: return
+        if old == "/" or new == "/":
+            raise FuseOSError(EINVAL)
         # TODO Check permissions in directories
-        item = self.getItemOrThrow(old)
+        item = self.getItemOrThrow(old, attrs=ALL_ATTRS)
+        if self.isDirectory(item):
+            raise FuseOSError(EOPNOTSUPP)
         newItem = self.getItemOrNone(new, attrs=["st_mode"])
-        if self.isDirectory(newItem):
-            item.hash_key = new
-            item.save()
-        elif self.isFile(newItem):
+        if self.isFile(newItem):
             raise FuseOSError(EEXIST)
+        elif self.isLink(newItem):
+            raise FuseOSError(EINVAL)
+        elif self.isDirectory(newItem) or newItem is None:
+            file = dynamofile.DynamoFile(old, self)
+#            newPath = new if newItem is none else os.path.join(new, os.basename(old))
+            with file.exclusiveLock():
+                # TODO Move file contents
+                if self.isFile(item):
+                    pass # file.move(newPath)
+                elif self.isDirectory(item):
+                     pass # TODO Implement
+                attrsCopy={
+                    "path": new if self.isDirectory(newItem) else os.path.dirname(new),
+                    "name": os.path.basename(old) if self.isDirectory(newItem) else os.path.basename(new)
+                }
+                for k,v in item.items():
+                    if k == "name" or k == "path": continue
+                    attrsCopy[k] = v
+                newItem = self.table.new_item(attrs=attrsCopy)
+                newItem.put()
+            item.delete()
         else:
-            item.hash_key = os.path.dirname(new)
-            item.range_key = os.path.basename(new)
-            item.save()
+            raise FuseOSError(EINVAL)
 
     def readlink(self, path):
         self.log.debug("readlink(%s)", path)
@@ -214,7 +230,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
                  'st_atime': l_time, 'st_blksize': BLOCK_SIZE}
         if mode & S_IFDIR == 0:
             mode |= S_IFREG
-            attrs["mode"] = mode
+            attrs["st_mode"] = mode
         item = self.table.new_item(attrs=attrs)
         item.put()
         return self.allocId()
@@ -224,22 +240,13 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return dict(
             f_bsize=BLOCK_SIZE,
             f_frsize=BLOCK_SIZE,
-            f_blocks=(sys.maxint - 1) / BLOCK_SIZE,
-            f_bfree=(sys.maxint - 1) / BLOCK_SIZE,
-            f_bavail=(sys.maxint - 1) / BLOCK_SIZE,
+            f_blocks=(sys.maxint - 1),
+            f_bfree=(sys.maxint - 2),
+            f_bavail=(sys.maxint - 2),
             f_files=self.fileCount(),
             f_ffree=sys.maxint - 1,
             f_favail=sys.maxint - 1,
-            #            f_fsid=1023,
-            #            f_flag=1022,
-            #            f_namemax=1024,
-            #            f_blocks=1024*1024,
-            #            f_bfree= 1024*1024,
-            #            f_bavail=1024*1024,
-            #            f_files= 1,
-            #            f_ffree= 1024*1024,
-            #            f_favail=1024*1024,
-            f_fsid=1,
+            f_fsid=0,
             f_flag=0,
             f_namemax=1024
         )
@@ -357,10 +364,17 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def isFile(self, item):
         if item is not None:
             return S_ISREG(item["st_mode"])
+        return False
 
     def isDirectory(self, item):
         if item is not None:
             return S_ISDIR(item["st_mode"])
+        return False
+
+    def isLink(self, item):
+        if item is not None:
+            return S_ISLNK(item["st_mode"])
+        return False
 
     def newItem(self, attrs):
         return self.table.new_item(attrs=attrs)
@@ -374,6 +388,7 @@ if __name__ == '__main__':
     logging.getLogger("dynamo-fuse").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-file").setLevel(logging.DEBUG)
     logging.getLogger("fuse.log-mixin").setLevel(logging.INFO)
+    logging.getLogger("dynamo-fuse-lock").setLevel(logging.DEBUG)
 
     fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True)
 
