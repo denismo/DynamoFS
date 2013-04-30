@@ -163,12 +163,13 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not newItem is None:
             raise FuseOSError(EEXIST)
         else:
-            attrsCopy=dict((k, item[k]) for k in item.keys())
-            attrsCopy["path"] = os.path.dirname(new)
-            attrsCopy["name"] = os.path.basename(new)
-            attrsCopy["st_ctime"] = int(time())
-            newItem = self.table.new_item(attrs=attrsCopy)
-            newItem.put()
+            self.cloneItem(item, new)
+#            attrsCopy=dict((k, item[k]) for k in item.keys())
+#            attrsCopy["path"] = os.path.dirname(new)
+#            attrsCopy["name"] = os.path.basename(new)
+#            attrsCopy["st_ctime"] = int(time())
+#            newItem = self.table.new_item(attrs=attrsCopy)
+#            newItem.put()
 
             if self.isDirectory(item):
                 self.moveDirectory(old, new)
@@ -218,7 +219,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if mode & S_IFDIR == 0:
             mode |= S_IFREG
             attrs["st_mode"] = mode
-            attrs["uniqueId"] = self.allocUniqueId()
+            attrs["blockId"] = self.allocUniqueId()
         item = self.table.new_item(attrs=attrs)
         item.put()
         return self.allocId()
@@ -280,7 +281,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def write(self, path, data, offset, fh):
         self.log.debug("write(%s, len=%d, offset=%d)", path, len(data), offset)
 
-        item = self.getItemOrThrow(path, attrs=["st_size", "uniqueId"])
+        item = self.getItemOrThrow(path, attrs=["st_size", "blockId"])
 
         # TODO Cache opened item based on file handle
         file = dynamofile.DynamoFile(item, self)
@@ -296,14 +297,22 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("read(%s, size=%d, offset=%d)", path, size, offset)
 
         # TODO Cache opened item based on file handle
-        file = dynamofile.DynamoFile(self.getItemOrThrow(path, attrs=["uniqueId"]), self)
+        file = dynamofile.DynamoFile(self.getItemOrThrow(path, attrs=["blockId"]), self)
         return file.read(offset, size) # throws
 
     def link(self, target, source):
         self.log.debug("link(%s, %s)", target, source)
         if len(target) > 1024:
             raise FuseOSError(ENAMETOOLONG)
-        raise FuseOSError(EOPNOTSUPP)
+
+        item = self.getItemOrThrow(source, attrs=ALL_ATTRS)
+        if self.isDirectory(item):
+            raise FuseOSError(EINVAL)
+
+        if self.getItemOrNone(target) is not None:
+            raise FuseOSError(EEXIST)
+
+        self.cloneItem(item, target)
 
     def lock(self, path, fip, cmd, lock):
         self.log.debug("lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start, lock.l_len, lock.l_type)
@@ -390,6 +399,15 @@ class DynamoFS(BotoExceptionMixin, Operations):
         for entry in self.readdir(old):
             if entry == "." or entry == "..": continue;
             self.rename(os.path.join(old, entry), os.path.join(new, entry))
+
+    def cloneItem(self, item, path):
+        attrs=dict((k, item[k]) for k in item.keys())
+        attrs["path"] = os.path.dirname(path)
+        attrs["name"] = os.path.basename(path)
+        attrs["st_ctime"] = int(time())
+        newItem = self.table.new_item(attrs=attrs)
+        newItem.put()
+        return newItem
 
 if __name__ == '__main__':
     if len(argv) != 4:

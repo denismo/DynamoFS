@@ -25,7 +25,7 @@ class DynamoFile:
     def __init__(self, item, accessor):
         self.log = logging.getLogger("dynamo-fuse-file")
         self.accessor = accessor
-        self.path = item["uniqueId"]
+        self.path = item["blockId"]
 
     def write(self, data, offset):
         startBlock = offset / BLOCK_SIZE
