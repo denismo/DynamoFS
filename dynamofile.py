@@ -22,10 +22,10 @@ if not hasattr(__builtins__, 'bytes'):
 
 class DynamoFile:
 
-    def __init__(self, path, accessor):
+    def __init__(self, item, accessor):
         self.log = logging.getLogger("dynamo-fuse-file")
         self.accessor = accessor
-        self.path = path
+        self.path = item["uniqueId"]
 
     def write(self, data, offset):
         startBlock = offset / BLOCK_SIZE

@@ -26,6 +26,7 @@ setup(
     license = 'Apache License, Version 2.0',
     py_modules=['dynamofs'],
     url = 'https://github.com/denismo/dynamo-fuse',
+    packages=['python-fuse'],
 
     use_2to3 = True,
     # only use the following fixers (everything else is already compatible)

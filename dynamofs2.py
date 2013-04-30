@@ -17,6 +17,10 @@
 from __future__ import with_statement
 import dynamofile
 
+# DynamoFS implementation which stores the file IDs with the directory allowing for easy renaming.
+# This is in contrast with another design which uses path as the key which makes renaming a very expensive operation (copying the whole subtree)
+# It also uses IDs for block references which allows for hardlinks
+
 __author__ = 'Denis Mikhalkin'
 
 from errno import *
@@ -41,7 +45,7 @@ import itertools
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-BLOCK_SIZE = 32768 # 64K minus 1K for path-name and about 1K for all other fields
+BLOCK_SIZE = 32768
 ALL_ATTRS = None
 
 class BotoExceptionMixin:
@@ -75,7 +79,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("init")
 
     def __createRoot(self):
-        if not self.table.has_item("/", "/"):
+        if not self.getItemOrNone("/"):
             self.mkdir("/", 0755)
 
     def chmod(self, path, mode):
@@ -104,7 +108,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("utimens(%s)", path)
         now = int(time())
         atime, mtime = times if times else (now, now)
-        item = self.getItemOrThrow(path, attrs=["name", "path", "st_atime", "st_mtime"])
+        item = self.getItemOrThrow(path, attrs=["st_atime", "st_mtime"])
         item['st_atime'] = atime
         item['st_mtime'] = mtime
         item.save()
@@ -126,17 +130,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def readdir(self, path, fh=None):
         self.log.debug("readdir(%s)", path)
         # Verify the directory exists
-        self.checkFileDirExists(path)
+        dir = self.getItemOrThrow(path, attrs=ALL_ATTRS)
 
-        yield '.'
-        yield '..'
-        items = self.table.query(path, attributes_to_get=['name'])
-
-        # TODO Pagination
-        for entry in items:
-            if entry['name'] == "/":
-                continue # This could be the folder itself
-            yield entry['name']
+        return ['.', '..'] + dir["children"]
 
     def mkdir(self, path, mode):
         self.log.debug("mkdir(%s)", path)
@@ -167,15 +163,17 @@ class DynamoFS(BotoExceptionMixin, Operations):
         elif self.isLink(newItem):
             raise FuseOSError(EINVAL)
         elif self.isDirectory(newItem) or newItem is None:
-            file = dynamofile.DynamoFile(item, self)
+            file = dynamofile.DynamoFile(old, self)
+#            newPath = new if newItem is none else os.path.join(new, os.basename(old))
             with file.exclusiveLock():
+                # TODO Move file contents
                 if self.isFile(item):
-                    pass # The id remains and points to the old data. Data don't link back
+                    pass # file.move(newPath)
                 elif self.isDirectory(item):
-                    pass # TODO Implement recursive directory move
+                     pass # TODO Implement
                 attrsCopy={
                     "path": new if self.isDirectory(newItem) else os.path.dirname(new),
-                    "name": os.path.basename(old) if self.isDirectory(newItem) else os.path.basename(new),
+                    "name": os.path.basename(old) if self.isDirectory(newItem) else os.path.basename(new)
                 }
                 for k,v in item.items():
                     if k == "name" or k == "path": continue
@@ -197,13 +195,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("symlink(%s, %s)", target, source)
         if len(target) > 1024:
             raise FuseOSError(ENAMETOOLONG)
-            # TODO: Verify does not exist
+        # TODO: Verify does not exist
         # TODO: Update parent directory time
-        name = os.path.basename(target)
-        if name == "":
-            name = "/"
         l_time = int(time())
-        attrs = {'name': name, 'path': os.path.dirname(target),
+        attrs = {'key': self.allocUniqueId(), 'range': target,
                  'st_mode': S_IFLNK | 0777, 'st_nlink': 1,
                  'symlink': source, 'st_size': 0, 'st_ctime': l_time,
                  'st_mtime': l_time, 'st_atime': l_time
@@ -219,17 +214,13 @@ class DynamoFS(BotoExceptionMixin, Operations):
         # TODO: Verify does not exist
         # TODO: Update parent directory time
         l_time = int(time())
-        name = os.path.basename(path)
-        if name == "":
-            name = "/"
-        attrs = {'name': name, 'path': os.path.dirname(path),
+        attrs = {'key': self.allocUniqueId(), 'range': path,
                  'st_mode': mode, 'st_nlink': 1,
                  'st_size': 0, 'st_ctime': l_time, 'st_mtime': l_time,
                  'st_atime': l_time, 'st_blksize': BLOCK_SIZE}
         if mode & S_IFDIR == 0:
             mode |= S_IFREG
             attrs["st_mode"] = mode
-            attrs["uniqueId"] = self.allocUniqueId()
         item = self.table.new_item(attrs=attrs)
         item.put()
         return self.allocId()
@@ -259,27 +250,26 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         lastBlock = length / BLOCK_SIZE
 
-        items = self.table.query(hash_key=path, range_key_condition=(GT(str(lastBlock)) if length else None), attributes_to_get=['name', "path"])
+        items = self.table.query(hash_key=path, range_key_condition=(GT(str(lastBlock)) if length else None), attributes_to_get=['key', "range"])
         # TODO Pagination
         for entry in items:
             entry.delete()
 
-        # TODO Can optimize if length is stored as a field
         if length:
-            lastItem = self.getItemOrNone(os.path.join(path, str(lastBlock)), attrs=["data", "name", "path"])
+            lastItem = self.getItemOrNone(os.path.join(path, str(lastBlock)), attrs=["data"])
             if lastItem is not None and "data" in lastItem:
                 lastItem['data'] = Binary(lastItem['data'].value[0:(length % BLOCK_SIZE)])
                 lastItem.save()
 
-        item = self.getItemOrThrow(path, attrs=['st_size', "name", "path"])
+        item = self.getItemOrThrow(path, attrs=['st_size'])
         item['st_size'] = length
         item.save()
 
     def unlink(self, path):
         self.log.debug("unlink(%s)", path)
-        self.getItemOrThrow(path, attrs=['name', 'path']).delete()
+        self.getItemOrThrow(path, attrs=[]).delete()
 
-        items = self.table.query(path, attributes_to_get=['name', 'path'])
+        items = self.table.query(path, attributes_to_get=['key', 'range'])
         # TODO Pagination
         for entry in items:
             entry.delete()
@@ -291,23 +281,20 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def write(self, path, data, offset, fh):
         self.log.debug("write(%s, len=%d, offset=%d)", path, len(data), offset)
 
-        item = self.getItemOrThrow(path, attrs=["st_size", "uniqueId"])
-
-        # TODO Cache opened item based on file handle
-        file = dynamofile.DynamoFile(item, self)
+        file = dynamofile.DynamoFile(path, self)
         file.write(data, offset) # throws
 
+        item = self.getItemOrThrow(path, attrs=["st_size"])
         self.log.debug("write updating item st_size to %d", max(item["st_size"], offset + len(data)))
         item["st_size"] = max(item["st_size"], offset + len(data))
-        item.save() # TODO What if item has changed underneath?
+        item.save()
 
         return len(data)
 
     def read(self, path, size, offset, fh):
         self.log.debug("read(%s, size=%d, offset=%d)", path, size, offset)
 
-        # TODO Cache opened item based on file handle
-        file = dynamofile.DynamoFile(self.getItemOrThrow(path, attrs=["uniqueId"]), self)
+        file = dynamofile.DynamoFile(path, self)
         return file.read(offset, size) # throws
 
     def link(self, target, source):
@@ -339,16 +326,19 @@ class DynamoFS(BotoExceptionMixin, Operations):
 #        return res["Attributes"]["value"]
         return self.counter.next()
 
+    def allocUniqueId(self):
+        idItem = self.table.new_item(attrs={'range': 'counter', 'key': 'global'})
+        idItem.add_attribute("value", 1)
+        res = idItem.save(return_values="ALL_NEW")
+        return res["Attributes"]["value"]
+
     def checkFileDirExists(self, filepath):
         self.checkFileExists(os.path.dirname(filepath))
 
     def checkFileExists(self, filepath):
         return self.getItemOrThrow(filepath, attrs=[])
 
-    def getItemOrThrow(self, filepath, attrs=[]):
-        if attrs is not None:
-            if not "name" in attrs: attrs += "name"
-            if not "path" in attrs: attrs += "path"
+    def getItemOrThrow(self, filepath, attrs=['name']):
         name = os.path.basename(filepath)
         if name == "":
             name = "/"
@@ -357,10 +347,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         except DynamoDBKeyNotFoundError:
             raise FuseOSError(ENOENT)
 
-    def getItemOrNone(self, path, attrs=[]):
-        if attrs is not None:
-            if not "name" in attrs: attrs += "name"
-            if not "path" in attrs: attrs += "path"
+    def getItemOrNone(self, path, attrs=["name"]):
         name = os.path.basename(path)
         if name == "":
             name = "/"
@@ -386,12 +373,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def newItem(self, attrs):
         return self.table.new_item(attrs=attrs)
-
-    def allocUniqueId(self):
-        idItem = self.table.new_item(attrs={'name': 'counter', 'path': 'global'})
-        idItem.add_attribute("value", 1)
-        res = idItem.save(return_values="ALL_NEW")
-        return res["Attributes"]["value"]
 
 if __name__ == '__main__':
     if len(argv) != 4:
