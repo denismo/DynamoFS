@@ -163,13 +163,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not newItem is None:
             raise FuseOSError(EEXIST)
         else:
-            attrsCopy={
-                "path": os.path.dirname(new),
-                "name": os.path.basename(new)
-                }
-            for k,v in item.items():
-                if k == "name" or k == "path": continue
-                attrsCopy[k] = v
+            attrsCopy=dict((k, item[k]) for k in item.keys())
+            attrsCopy["path"] = os.path.dirname(new)
+            attrsCopy["name"] = os.path.basename(new)
+            attrsCopy["st_ctime"] = int(time())
             newItem = self.table.new_item(attrs=attrsCopy)
             newItem.put()
 
@@ -316,6 +313,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def bmap(self, path, blocksize, idx):
         self.log.debug("bmap(%s, blocksize=%d, idx=%d)", path, blocksize, idx)
+        raise FuseOSError(EOPNOTSUPP)
+
+    def mknod(self, path, mode, dev):
+        self.log.debug("mknod(%s, mode=%d, dev=%d)", path, mode, dev)
         raise FuseOSError(EOPNOTSUPP)
 
         # ============ PRIVATE ====================
