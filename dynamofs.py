@@ -159,32 +159,24 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(EINVAL)
         # TODO Check permissions in directories
         item = self.getItemOrThrow(old, attrs=ALL_ATTRS)
-        if self.isDirectory(item):
-            raise FuseOSError(EOPNOTSUPP)
         newItem = self.getItemOrNone(new, attrs=["st_mode"])
-        if self.isFile(newItem):
+        if not newItem is None:
             raise FuseOSError(EEXIST)
-        elif self.isLink(newItem):
-            raise FuseOSError(EINVAL)
-        elif self.isDirectory(newItem) or newItem is None:
-            file = dynamofile.DynamoFile(item, self)
-            with file.exclusiveLock():
-                if self.isFile(item):
-                    pass # The id remains and points to the old data. Data don't link back
-                elif self.isDirectory(item):
-                    pass # TODO Implement recursive directory move
-                attrsCopy={
-                    "path": new if self.isDirectory(newItem) else os.path.dirname(new),
-                    "name": os.path.basename(old) if self.isDirectory(newItem) else os.path.basename(new),
-                }
-                for k,v in item.items():
-                    if k == "name" or k == "path": continue
-                    attrsCopy[k] = v
-                newItem = self.table.new_item(attrs=attrsCopy)
-                newItem.put()
-            item.delete()
         else:
-            raise FuseOSError(EINVAL)
+            attrsCopy={
+                "path": os.path.dirname(new),
+                "name": os.path.basename(new)
+                }
+            for k,v in item.items():
+                if k == "name" or k == "path": continue
+                attrsCopy[k] = v
+            newItem = self.table.new_item(attrs=attrsCopy)
+            newItem.put()
+
+            if self.isDirectory(item):
+                self.moveDirectory(old, new)
+
+            item.delete()
 
     def readlink(self, path):
         self.log.debug("readlink(%s)", path)
@@ -347,8 +339,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def getItemOrThrow(self, filepath, attrs=[]):
         if attrs is not None:
-            if not "name" in attrs: attrs += "name"
-            if not "path" in attrs: attrs += "path"
+            if not "name" in attrs: attrs.append("name")
+            if not "path" in attrs: attrs.append("path")
         name = os.path.basename(filepath)
         if name == "":
             name = "/"
@@ -359,8 +351,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def getItemOrNone(self, path, attrs=[]):
         if attrs is not None:
-            if not "name" in attrs: attrs += "name"
-            if not "path" in attrs: attrs += "path"
+            if not "name" in attrs: attrs.append("name")
+            if not "path" in attrs: attrs.append("path")
         name = os.path.basename(path)
         if name == "":
             name = "/"
@@ -392,6 +384,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
         idItem.add_attribute("value", 1)
         res = idItem.save(return_values="ALL_NEW")
         return res["Attributes"]["value"]
+
+    def moveDirectory(self, old, new):
+        for entry in self.readdir(old):
+            if entry == "." or entry == "..": continue;
+            self.rename(os.path.join(old, entry), os.path.join(new, entry))
 
 if __name__ == '__main__':
     if len(argv) != 4:
