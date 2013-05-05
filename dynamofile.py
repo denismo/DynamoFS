@@ -1,3 +1,19 @@
+#    Dynamo-Fuse - POSIX-compliant distributed FUSE file system with AWS DynamoDB as backend
+#    Copyright (C) 2013 Denis Mikhalkin
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 from dynamofs import BLOCK_SIZE
 
 __author__ = 'Denis Mikhalkin'
@@ -37,10 +53,11 @@ class DynamoFile:
             item = self.accessor.getItemOrNone(os.path.join(self.path, str(block)), attrs=["data"])
             if item is None:
                 self.log.debug("write block %d is None", block)
-                item = self.accessor.newItem(attrs={
-                    "path": self.path,
-                    "name": str(block),
-                    })
+                if not block:
+                    # First block must keep the link count and times
+                    raise "First block cannot be empty for " + self.path
+                else:
+                    item = self.accessor.newItem(attrs={"path": self.path, "name": str(block) })
             dataSlice = data[0:initialBlockOffset] if block == startBlock else \
                 data[blockOffset: blockOffset + BLOCK_SIZE]
             self.log.debug("write block %d slice length %d from offset %d", block, len(dataSlice), blockOffset)
@@ -54,6 +71,22 @@ class DynamoFile:
                 self.log.debug("write block %d has NO data", block)
                 item['data'] = Binary(dataSlice)
             item.save()
+
+    def getFirstBlock(self, attrs=[]):
+        return self.accessor.get_item(self.path, "0", attrs=attrs)
+
+    def createFirstBlock(self, mode):
+        l_time = int(time())
+        item = self.accessor.newItem(attrs={
+            "path": self.path, "name": "0",
+            "st_nlink": 1,
+            "st_mtime": l_time,
+            "st_atime": l_time,
+            "st_ctime": l_time,
+            "st_mode":  mode,
+            "st_size": 0
+        })
+        item.put()
 
     def read(self, offset, size):
         startBlock = offset / BLOCK_SIZE
