@@ -16,7 +16,7 @@
 
 __author__ = 'Denis Mikhalkin'
 
-from dynamofs import BLOCK_SIZE
+BLOCK_SIZE = 32768
 
 from errno import EACCES, ENOENT, EINVAL, EEXIST, EOPNOTSUPP, EIO, EAGAIN
 from os.path import realpath
@@ -40,6 +40,9 @@ class BlockRecord:
     log = logging.getLogger("dynamo-fuse-block")
     item = None
 
+    def __init__(self, item):
+        self.item = item
+
     def __getitem__(self, key):
         return self.item[key]
 
@@ -47,14 +50,17 @@ class BlockRecord:
         self.item[key] = value
         return value
 
+    def __contains__(self, item):
+        return item in self.item
+
     def save(self):
         self.item.save()
 
     def writeData(self, startOffset, dataSlice):
         if "data" in self.item:
-            self.log.debug("write block %d has data", self.blockId)
+            self.log.debug("write block %s has data", self.item["name"])
             itemData = self.item["data"].value
             self.item['data'] = Binary(itemData[0:startOffset] + dataSlice + itemData[startOffset + len(dataSlice):])
         else:
-            self.log.debug("write block %d has NO data", self.blockId)
+            self.log.debug("write block %s has NO data", self.item["name"])
             self.item['data'] = Binary(dataSlice)

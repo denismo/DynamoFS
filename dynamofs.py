@@ -29,7 +29,7 @@ import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
-from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR
+from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR, S_ISLNK
 from boto.dynamodb.types import Binary
 from time import time
 from boto.dynamodb.condition import EQ, GT
@@ -40,11 +40,12 @@ import sys
 import cStringIO
 import itertools
 from MasterRecord import MasterRecord
+from BlockRecord import BLOCK_SIZE
+import traceback
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-BLOCK_SIZE = 32768 # 64K minus 1K for path-name and about 1K for all other fields
 ALL_ATTRS = None
 
 class BotoExceptionMixin:
@@ -55,14 +56,26 @@ class BotoExceptionMixin:
             self.log.debug("<- %s: %s", op, repr(ret))
             return ret
         except BotoServerError, e:
-            self.log.error("<- %s: %s", op, repr(e))
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.log.error("<- %s: %s", op, traceback.format_exception(exc_type, exc_value, exc_traceback))
             raise FuseOSError(EIO)
         except BotoClientError, e:
-            self.log.error("<- %s: %s", op, repr(e))
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.log.error("<- %s: %s", op, traceback.format_exception(exc_type, exc_value, exc_traceback))
             raise FuseOSError(EIO)
         except DynamoDBResponseError, e:
-            self.log.error("<- %s: %s", op, repr(e))
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.log.error("<- %s: %s", op, traceback.format_exception(exc_type, exc_value, exc_traceback))
             raise FuseOSError(EIO)
+        except FuseOSError, e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.log.error("<- %s: %s", op, traceback.format_exception(exc_type, exc_value, exc_traceback))
+            raise e
+        except BaseException, e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.log.error("<- %s: %s", op, traceback.format_exception(exc_type, exc_value, exc_traceback))
+            raise FuseOSError(EIO)
+
 
 class DynamoFS(BotoExceptionMixin, Operations):
     def __init__(self, region, tableName):
@@ -116,10 +129,16 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def getattr(self, path, fh=None):
         self.log.debug("getattr(%s)", path)
         record = MasterRecord(path, self)
-        block = record.getFirstBlock()
         if record.isFile():
+            block = record.getFirstBlock()
             block["st_blocks"] = (block["st_size"] + record["st_blksize"]-1)/record["st_blksize"]
-        return block
+            return block.item
+        elif record.isDirectory():
+            record["st_nlink"] = 1
+            record["st_size"] = 0
+            return record.record
+        else:
+            return record.record
 
     def opendir(self, path):
         self.log.debug("opendir(%s)", path)
@@ -129,7 +148,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def readdir(self, path, fh=None):
         self.log.debug("readdir(%s)", path)
         # Verify the directory exists
-        self.checkFileDirExists(path)
+        self.checkFileExists(path)
 
         yield '.'
         yield '..'
@@ -164,17 +183,12 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if old == "/" or new == "/":
             raise FuseOSError(EINVAL)
         # TODO Check permissions in directories
-        item = self.getItemOrThrow(old, attrs=ALL_ATTRS)
-        newItem = self.getItemOrNone(new, attrs=["st_mode"])
+        item = MasterRecord(old, self)
+        newItem = self.getItemOrNone(new, attrs=[])
         if not newItem is None:
             raise FuseOSError(EEXIST)
         else:
-            self.cloneItem(item, new)
-
-            if self.isDirectory(item):
-                self.moveDirectory(old, new)
-
-            item.delete()
+            item.moveTo(new)
 
     def readlink(self, path):
         self.log.debug("readlink(%s)", path)
@@ -194,6 +208,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             name = "/"
         l_time = int(time())
         attrs = {'name': name, 'path': os.path.dirname(target),
+                 'type': 'Symlink',
                  'st_mode': S_IFLNK | 0777, 'st_nlink': 1,
                  'symlink': source, 'st_size': 0, 'st_ctime': l_time,
                  'st_mtime': l_time, 'st_atime': l_time
@@ -209,11 +224,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
         # TODO: Verify does not exist
         # TODO: Update parent directory time
 
-        if mode & S_IFDIR == 0 or mode & S_IFLNK == 0:
+        if mode & S_IFDIR == 0 and mode & S_IFLNK == 0:
             mode |= S_IFREG
 
-        record = MasterRecord(path, self, create=True, mode=mode)
-        record.createFirstBlock(mode)
+        MasterRecord(path, self, create=True, mode=mode)
 
         return self.allocId()
 
@@ -240,23 +254,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def truncate(self, path, length, fh=None):
         self.log.debug("truncate(%s, %d)", path, length)
 
-        lastBlock = length / BLOCK_SIZE
-
-        items = self.table.query(hash_key=path, range_key_condition=(GT(str(lastBlock)) if length else None), attributes_to_get=['name', "path"])
-        # TODO Pagination
-        for entry in items:
-            entry.delete()
-
-        # TODO Can optimize if length is stored as a field
-        if length:
-            lastItem = self.getItemOrNone(os.path.join(path, str(lastBlock)), attrs=["data", "name", "path"])
-            if lastItem is not None and "data" in lastItem:
-                lastItem['data'] = Binary(lastItem['data'].value[0:(length % BLOCK_SIZE)])
-                lastItem.save()
-
-        item = self.getItemOrThrow(path, attrs=['st_size', "name", "path"])
-        item['st_size'] = length
-        item.save()
+        MasterRecord(path, self).truncate(length)
 
     def unlink(self, path):
         self.log.debug("unlink(%s)", path)
@@ -284,23 +282,21 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def read(self, path, size, offset, fh):
         self.log.debug("read(%s, size=%d, offset=%d)", path, size, offset)
 
-        # TODO Cache opened item based on file handle
-        file = dynamofile.DynamoFile(self.getItemOrThrow(path, attrs=["blockId"]), self)
-        return file.read(offset, size) # throws
+        return MasterRecord(path, self).read(offset, size)
 
     def link(self, target, source):
         self.log.debug("link(%s, %s)", target, source)
         if len(target) > 1024:
             raise FuseOSError(ENAMETOOLONG)
 
-        item = self.getItemOrThrow(source, attrs=ALL_ATTRS)
-        if self.isDirectory(item):
+        record = MasterRecord(source, self)
+        if record.isDirectory():
             raise FuseOSError(EINVAL)
 
         if self.getItemOrNone(target) is not None:
             raise FuseOSError(EEXIST)
 
-        self.cloneItem(item, target)
+        record.cloneItem(target)
 
     def lock(self, path, fip, cmd, lock):
         self.log.debug("lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start, lock.l_len, lock.l_type)
@@ -324,9 +320,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def allocId(self):
         return self.counter.next()
-
-    def checkFileDirExists(self, filepath):
-        self.checkFileExists(os.path.dirname(filepath))
 
     def checkFileExists(self, filepath):
         MasterRecord(filepath, self)
@@ -379,20 +372,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
         res = idItem.save(return_values="ALL_NEW")
         return res["Attributes"]["value"]
 
-    def moveDirectory(self, old, new):
-        for entry in self.readdir(old):
-            if entry == "." or entry == "..": continue;
-            self.rename(os.path.join(old, entry), os.path.join(new, entry))
-
-    def cloneItem(self, item, path):
-        attrs=dict((k, item[k]) for k in item.keys())
-        attrs["path"] = os.path.dirname(path)
-        attrs["name"] = os.path.basename(path)
-        attrs["st_ctime"] = int(time())
-        newItem = self.table.new_item(attrs=attrs)
-        newItem.put()
-        return newItem
-
 if __name__ == '__main__':
     if len(argv) != 4:
         print('usage: %s <region> <dynamo table> <mount point>' % argv[0])
@@ -403,6 +382,8 @@ if __name__ == '__main__':
     logging.getLogger("dynamo-fuse-file").setLevel(logging.DEBUG)
     logging.getLogger("fuse.log-mixin").setLevel(logging.INFO)
     logging.getLogger("dynamo-fuse-lock").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-master").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-block").setLevel(logging.DEBUG)
 
     fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True)
 
