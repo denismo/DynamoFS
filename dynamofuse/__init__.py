@@ -17,7 +17,9 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
-import dynamofile
+from dynamofs2 import BLOCK_SIZE
+import dynamofuse
+from dynamofuse.records.file import File
 
 __author__ = 'Denis Mikhalkin'
 
@@ -39,8 +41,6 @@ import logging
 import sys
 import cStringIO
 import itertools
-from MasterRecord import MasterRecord
-from BlockRecord import BLOCK_SIZE
 import traceback
 
 if not hasattr(__builtins__, 'bytes'):
@@ -78,6 +78,8 @@ class BotoExceptionMixin:
 
 
 class DynamoFS(BotoExceptionMixin, Operations):
+    BLOCK_SIZE = 32768
+
     def __init__(self, region, tableName):
         self.log = logging.getLogger("dynamo-fuse")
         self.tableName = tableName
@@ -94,22 +96,26 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not self.table.has_item("/", "/"):
             self.mkdir("/", 0755)
 
+    # TODO Implement access
+    def access(self, path, amode):
+        raise FuseOSError(EAFNOSUPPORT)
+
     def chmod(self, path, mode):
         self.log.debug("chmod(%s, mode=%d)", path, mode)
 
-        block = MasterRecord(path, self).getFirstBlock()
-        block['st_mode'] &= 0770000
-        block['st_mode'] |= mode
-        block.save()
+        self.getItemOrThrow(path).chmod(mode)
         return 0
 
     def chown(self, path, uid, gid):
         self.log.debug("chown(%s, uid=%d, gid=%d)", path, uid, gid)
-        block = MasterRecord(path, self).getFirstBlock()
-        block['st_uid'] = uid
-        block['st_gid'] = gid
-        block.save()
+
+        self.getItemOrThrow(path).chown(uid, gid)
         return 0
+
+    def getattr(self, path, fh=None):
+        self.log.debug("getattr(%s)", path)
+
+        return self.getItemOrThrow(path).getattr()
 
     def open(self, path, flags):
         self.log.debug("open(%s, flags=0x%x)", path, flags)
@@ -117,28 +123,17 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.checkFileExists(path)
         return self.allocId()
 
+    # TODO Continue refactoring
     def utimens(self, path, times=None):
         self.log.debug("utimens(%s)", path)
         now = int(time())
         atime, mtime = times if times else (now, now)
-        block = MasterRecord(path, self).getFirstBlock()
-        block['st_atime'] = atime
-        block['st_mtime'] = mtime
-        block.save()
 
-    def getattr(self, path, fh=None):
-        self.log.debug("getattr(%s)", path)
-        record = MasterRecord(path, self)
-        if record.isFile():
-            block = record.getFirstBlock()
-            block["st_blocks"] = (block["st_size"] + record["st_blksize"]-1)/record["st_blksize"]
-            return block.item
-        elif record.isDirectory():
-            record["st_nlink"] = 1
-            record["st_size"] = 0
-            return record.record
-        else:
-            return record.record
+        item = self.getItemOrThrow(path)
+        if not item.isFile():
+            raise FuseOSError(EINVAL)
+
+        item.utimens(atime, mtime)
 
     def opendir(self, path):
         self.log.debug("opendir(%s)", path)
@@ -148,42 +143,34 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def readdir(self, path, fh=None):
         self.log.debug("readdir(%s)", path)
         # Verify the directory exists
-        self.checkFileExists(path)
+        dir = self.getItemOrThrow(path)
 
-        yield '.'
-        yield '..'
-        items = self.table.query(path, attributes_to_get=['name'])
-
-        # TODO Pagination
-        for entry in items:
-            if entry['name'] == "/":
-                continue # This could be the folder itself
-            yield entry['name']
+        return ['.', '..'] + dir.list()
 
     def mkdir(self, path, mode):
         self.log.debug("mkdir(%s)", path)
-        self.create(path, S_IFDIR | mode)
+        self.create(path, mode, "Directory")
 
-    # TODO Check if it is empty
     def rmdir(self, path):
         self.log.debug("rmdir(%s)", path)
 
-        record = MasterRecord(path, self)
-        if not record.isDirectory():
+        item = self.getItemOrThrow(path)
+
+        if not item.isDirectory():
             raise FuseOSError(EINVAL)
 
-        if len(self.readdir(path)) > 2:
+        if len(item.list()) > 0:
             raise FuseOSError(ENOTEMPTY)
 
-        record.delete()
+        item.delete()
 
     def rename(self, old, new):
         self.log.debug("rename(%s, %s)", old, new)
         if old == new: return
         if old == "/" or new == "/":
             raise FuseOSError(EINVAL)
-        # TODO Check permissions in directories
-        item = MasterRecord(old, self)
+
+        item = self.getItemOrThrow(old)
         newItem = self.getItemOrNone(new, attrs=[])
         if not newItem is None:
             raise FuseOSError(EEXIST)
@@ -192,42 +179,45 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def readlink(self, path):
         self.log.debug("readlink(%s)", path)
-        item = self.getItemOrThrow(path, attrs=['symlink'])
-        if not "symlink" in item:
+
+        item = self.getItemOrThrow(path)
+
+        if not item.isLink():
             raise FuseOSError(EINVAL)
+
         return item["symlink"]
 
     def symlink(self, target, source):
         self.log.debug("symlink(%s, %s)", target, source)
         if len(target) > 1024:
             raise FuseOSError(ENAMETOOLONG)
-        # TODO: Verify does not exist
+
+        item = self.getItemOrNone(target, attrs=[])
+        if item is not None:
+            raise FuseOSError(EEXIST)
+
+        self.createItem(target, "Symlink", attrs={'symlink': source})
+
         # TODO: Update parent directory time
-        name = os.path.basename(target)
-        if name == "":
-            name = "/"
-        l_time = int(time())
-        attrs = {'name': name, 'path': os.path.dirname(target),
-                 'type': 'Symlink',
-                 'st_mode': S_IFLNK | 0777, 'st_nlink': 1,
-                 'symlink': source, 'st_size': 0, 'st_ctime': l_time,
-                 'st_mtime': l_time, 'st_atime': l_time
-        }
-        item = self.table.new_item(attrs=attrs)
-        item.put()
         return 0
 
     def create(self, path, mode, fh=None):
         self.log.debug("create(%s, %d)", path, mode)
         if len(path) > 1024:
             raise FuseOSError(ENAMETOOLONG)
-        # TODO: Verify does not exist
+
+        item = self.getItemOrNone(target, attrs=[])
+        if item is not None:
+            raise FuseOSError(EEXIST)
+
         # TODO: Update parent directory time
+        if mode & S_IFDIR == 0:
+            type = "Directory"
+        elif mode & S_IFLNK == 0:
+            type = "Symlink"
+        else: type = "File"
 
-        if mode & S_IFDIR == 0 and mode & S_IFLNK == 0:
-            mode |= S_IFREG
-
-        MasterRecord(path, self, create=True, mode=mode)
+        self.createItem(path, type, attrs={'st_mode': mode})
 
         return self.allocId()
 
@@ -254,12 +244,16 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def truncate(self, path, length, fh=None):
         self.log.debug("truncate(%s, %d)", path, length)
 
-        MasterRecord(path, self).truncate(length)
+        item = self.getItemOrThrow(path)
+        if not item.isFile():
+            raise FuseOSError(EINVAL)
+
+        item.truncate(length)
 
     def unlink(self, path):
         self.log.debug("unlink(%s)", path)
 
-        MasterRecord(path, self).delete()
+        self.getItemOrThrow(path).delete()
 
     # TODO Should we instead implement MVCC?
     # TODO Or should we put big blocks onto S3
@@ -270,33 +264,35 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         # TODO Cache opened item based on file handle
         # TODO What if item has changed underneath?
-        record = MasterRecord(path, self)
-        record.write(data, offset)
 
-        block = record.getFirstBlock()
-        block["st_size"] = max(block["st_size"], offset + len(data))
-        block.save()
+        item = self.getItemOrThrow(path)
+        if not item.isFile():
+            raise FuseOSError(EINVAL)
 
-        return len(data)
+        return item.write(data, offset)
 
     def read(self, path, size, offset, fh):
         self.log.debug("read(%s, size=%d, offset=%d)", path, size, offset)
 
-        return MasterRecord(path, self).read(offset, size)
+        item = self.getItemOrThrow(path)
+        if not item.isFile():
+            raise FuseOSError(EINVAL)
+
+        return item.read(offset, size)
 
     def link(self, target, source):
         self.log.debug("link(%s, %s)", target, source)
         if len(target) > 1024:
             raise FuseOSError(ENAMETOOLONG)
 
-        record = MasterRecord(source, self)
-        if record.isDirectory():
+        item = self.getItemOrThrow(source)
+        if not item.isFile():
             raise FuseOSError(EINVAL)
 
-        if self.getItemOrNone(target) is not None:
+        if self.getItemOrNone(target, attrs=[]) is not None:
             raise FuseOSError(EEXIST)
 
-        record.cloneItem(target)
+        item.cloneItem(target)
 
     def lock(self, path, fip, cmd, lock):
         self.log.debug("lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start, lock.l_len, lock.l_type)
@@ -310,7 +306,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def mknod(self, path, mode, dev):
         self.log.debug("mknod(%s, mode=%d, dev=%d)", path, mode, dev)
-        raise FuseOSError(EOPNOTSUPP)
+
+        self.createItem(path, "Node", attrs={'st_mode': mode, 'st_rdev': dev})
+        return self.allocId()
 
         # ============ PRIVATE ====================
 
@@ -322,55 +320,101 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return self.counter.next()
 
     def checkFileExists(self, filepath):
-        MasterRecord(filepath, self)
+        self.getItemOrThrow(filepath, attrs=[])
 
-    def getItemOrThrow(self, filepath, attrs=[]):
+    def getItemOrThrow(self, filepath, attrs=None):
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
             if not "path" in attrs: attrs.append("path")
+            if not "type" in attrs: attrs.append("type")
         name = os.path.basename(filepath)
         if name == "":
             name = "/"
         try:
-            return self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs)
+            return self.createRecord(filepath, self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs))
         except DynamoDBKeyNotFoundError:
             raise FuseOSError(ENOENT)
 
-    def getItemOrNone(self, path, attrs=[]):
+    def getItemOrNone(self, path, attrs=None):
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
             if not "path" in attrs: attrs.append("path")
+            if not "type" in attrs: attrs.append("type")
         name = os.path.basename(path)
         if name == "":
             name = "/"
         try:
-            return self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs)
+            return self.createRecord(path, self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs))
         except DynamoDBKeyNotFoundError:
             return None
 
-    def isFile(self, item):
-        if item is not None:
-            return S_ISREG(item["st_mode"])
-        return False
+    def createRecord(self, path, item):
+        record = getattr(dynamofuse.records, item['type'])()
+        record.init(self, path, item)
+        return record
 
-    def isDirectory(self, item):
-        if item is not None:
-            return S_ISDIR(item["st_mode"])
-        return False
+    def createItem(self, path, type, attrs=None):
+        record = getattr(dynamofuse.records, type)()
+        record.create(self, path, attrs)
+        return record
 
-    def isLink(self, item):
-        if item is not None:
-            return S_ISLNK(item["st_mode"])
-        return False
-
-    def newItem(self, attrs):
-        return self.table.new_item(attrs=attrs)
 
     def allocUniqueId(self):
         idItem = self.table.new_item(attrs={'name': 'counter', 'path': 'global'})
         idItem.add_attribute("value", 1)
         res = idItem.save(return_values="ALL_NEW")
         return res["Attributes"]["value"]
+
+class BaseRecord:
+    record = None
+    accessor = None
+    record = None
+
+    def create(self, accessor, path, attrs):
+        self.accessor = accessor
+        self.path = path
+
+        name = os.path.basename(path)
+        if name == "":
+            name = "/"
+        l_time = int(time())
+        newAttrs = {'name': name, 'path': os.path.dirname(path),
+                    'type': self.__class__.__name__,
+                    'st_nlink': 1,
+                    'st_size': 0, 'st_ctime': l_time,
+                    'st_mtime': l_time, 'st_atime': l_time
+        }
+        for k, v in attrs.items():
+            newAttrs[k] = v
+        item = self.accessor.table.new_item(attrs=attrs)
+        item.put()
+        self.record = item
+
+    def init(self, accessor, path, record):
+        self.accessor = accessor
+        self.path = path
+        self.record = record
+
+    def getattr(self):
+        return self.record
+
+    def isFile(self):
+        return self.record["type"] == "File"
+
+    def isDirectory(self):
+        return self.record["type"] == "Directory"
+
+    def isLink(self):
+        return self.record["type"] == "Symlink"
+
+    def __getitem__(self, item):
+        return self.record[item]
+
+    def __setitem__(self, key, value):
+        self.record[key] = value
+
+    def save(self):
+        self.record.save()
 
 if __name__ == '__main__':
     if len(argv) != 4:

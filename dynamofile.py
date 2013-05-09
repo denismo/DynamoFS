@@ -14,14 +14,13 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from dynamofs import BLOCK_SIZE
+from dynamofuse.dynamofs import BLOCK_SIZE
 
 __author__ = 'Denis Mikhalkin'
 
-from errno import EACCES, ENOENT, EINVAL, EEXIST, EOPNOTSUPP, EIO, EAGAIN
+from errno import   EIO, EAGAIN
 from os.path import realpath
 from threading import Lock
-import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from stat import S_IFDIR, S_IFLNK, S_IFREG
 from time import time
@@ -30,7 +29,6 @@ from boto.dynamodb.types import Binary
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 import logging
-import sys
 import cStringIO
 
 if not hasattr(__builtins__, 'bytes'):

@@ -16,8 +16,6 @@
 
 __author__ = 'Denis Mikhalkin'
 
-BLOCK_SIZE = 32768
-
 from errno import EACCES, ENOENT, EINVAL, EEXIST, EOPNOTSUPP, EIO, EAGAIN
 from os.path import realpath
 from threading import Lock
