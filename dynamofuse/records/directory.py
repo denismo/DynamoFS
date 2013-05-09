@@ -33,3 +33,15 @@ class Directory(BaseRecord):
             if entry['name'] == "/":
                 continue # This could be the folder itself
             yield entry['name']
+
+    def moveTo(self, newPath):
+        self.cloneItem(newPath)
+
+        self.moveDirectory(newPath)
+
+        self.delete()
+
+    def moveDirectory(self, new):
+        for entry in self.accessor.readdir(self.path):
+            if entry == "." or entry == "..": continue
+            self.accessor.rename(os.path.join(self.path, entry), os.path.join(new, entry))

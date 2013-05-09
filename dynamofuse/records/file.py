@@ -34,44 +34,27 @@ import itertools
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-# TODO Split class into individual implementations for file, directory and link - it becomes difficult to manager operation flows by type (in some cases the flow is not correct)
 class File(BaseRecord):
     log = logging.getLogger("dynamo-fuse-master")
 
-    def __init__(self, path, accessor, create=False, mode=None, attrs=None):
+    def create(self, accessor, path, attrs):
         self.path = path
         self.accessor = accessor
-        name = os.path.basename(path)
-        if name == "":
-            name = "/"
-        if create:
-            attrs = {'name': name, 'path': os.path.dirname(path),
-                     'st_blksize': accessor.BLOCK_SIZE} if attrs is None else attrs
-            if mode is not None and not "type" in attrs:
-                if (mode & S_IFREG) == S_IFREG: attrs['type'] = 'File'
-                if (mode & S_IFDIR) == S_IFDIR: attrs['type'] = 'Directory'
-                if (mode & S_IFLNK) == S_IFLNK: attrs['type'] = 'Symlink'
 
-            createBlock = False # Only create block if it is not already created
-            if (mode & S_IFREG) == S_IFREG and not "blockId" in attrs:
-                attrs["blockId"] = str(self.accessor.allocUniqueId())
-                createBlock = True
-            if (mode & S_IFDIR) == S_IFDIR and not "st_ctime" in attrs:
-                l_time = int(time())
-                attrs['st_ctime'] = l_time
-                attrs['st_mtime'] = l_time
-                attrs['st_atime'] = l_time
-                attrs['st_mode'] = mode
+        assert 'st_mode' in attrs
 
-            self.record = self.accessor.table.new_item(attrs=attrs)
-            self.record.put()
-            if createBlock:
-                self.createFirstBlock(mode)
-        else:
-            try:
-                self.record = self.accessor.table.get_item(os.path.dirname(path), name)
-            except DynamoDBKeyNotFoundError:
-                raise FuseOSError(ENOENT)
+        if not 'st_blksize' in attrs:
+            attrs['st_blksize'] = accessor.BLOCK_SIZE
+
+        createBlock = False
+        if not "blockId" in attrs:
+            attrs["blockId"] = str(self.accessor.allocUniqueId())
+            createBlock = True
+
+        BaseRecord.create(self, accessor, path, attrs)
+
+        if createBlock:
+            self.createFirstBlock(attrs['st_mode'])
 
     def getFirstBlock(self, getData=False):
         if self.isDirectory() or self.isLink():
@@ -134,22 +117,17 @@ class File(BaseRecord):
         block.save()
 
     def delete(self):
-        if self.isFile():
-            block = self.getFirstBlock()
-            block["st_nlink"] -= 1
-            if not block["st_nlink"]:
-                items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
-                # TODO Pagination
-                for entry in items:
-                    entry.delete()
-            else:
-                block.save()
-            self.record.delete()
-        elif self.isDirectory():
-            raise FuseOSError(EINVAL)
+        block = self.getFirstBlock()
+        block["st_nlink"] -= 1
+        if not block["st_nlink"]:
+            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
+            # TODO Pagination
+            for entry in items:
+                entry.delete()
         else:
-            self.record.delete()
+            block.save()
 
+        BaseRecord.delete(self)
 
     def write(self, data, offset):
         self._write(data, offset)
@@ -204,30 +182,15 @@ class File(BaseRecord):
         finally:
             data.close()
 
-    def moveTo(self, newPath):
-        self.cloneItem(newPath)
-
-        if self.isDirectory():
-            self.moveDirectory(newPath)
-
-        self.delete()
-
     def cloneItem(self, path):
-        attrs=dict((k, self.record[k]) for k in self.record.keys())
-        attrs["path"] = os.path.dirname(path)
-        attrs["name"] = os.path.basename(path)
+        # Our record does not contain st_mode - only first block does
+        self.record['st_mode'] = self.getFirstBlock()["st_mode"]
+        newItem = BaseRecord.cloneItem(self, path)
 
-        # Uses existing blockId
-        newItem = File(path, self.accessor, create=True, mode=self.getFirstBlock()["st_mode"], attrs=attrs)
         newBlock = newItem.getFirstBlock()
         newBlock["st_ctime"] = int(time())
         newBlock["st_nlink"] += 1
         newBlock.save()
-
-    def moveDirectory(self, new):
-        for entry in self.accessor.readdir(self.path):
-            if entry == "." or entry == "..": continue
-            self.accessor.rename(os.path.join(self.path, entry), os.path.join(new, entry))
 
     def truncate(self, length, fh=None):
         lastBlock = length / self.accessor.BLOCK_SIZE
