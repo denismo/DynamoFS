@@ -13,12 +13,14 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+from posix import R_OK, X_OK, W_OK
 
 __author__ = 'Denis Mikhalkin'
 
 from dynamofuse.records.block import BlockRecord
-from dynamofuse import BaseRecord
+from dynamofuse.base import BaseRecord
 from errno import  ENOENT, EINVAL
+import os
 from os.path import realpath, join, dirname, basename
 from threading import Lock
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
@@ -62,7 +64,8 @@ class File(BaseRecord):
 
         if not hasattr(self, 'firstBlock'):
             self.firstBlock = BlockRecord(self.accessor.getItemOrThrow(os.path.join(self.record["blockId"], "0"),
-                attrs=(["data", "st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode"] if getData else ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode"])))
+                attrs=(["data", "st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'] if getData
+                       else ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'])))
 
         return self.firstBlock
 
@@ -91,18 +94,24 @@ class File(BaseRecord):
         })
         item.put()
 
+    def updateCTime(self):
+        block = self.getFirstBlock()
+        block['st_ctime'] = int(time())
+        block.save()
 
     ################# OPERATIONS ##########################
     def chmod(self, mode):
         block = self.getFirstBlock()
         block['st_mode'] &= 0770000
         block['st_mode'] |= mode
+        block['st_ctime'] = int(time())
         block.save()
 
     def chown(self, uid, gid):
         block = self.getFirstBlock()
         block['st_uid'] = uid
         block['st_gid'] = gid
+        block['st_ctime'] = int(time())
         block.save()
 
     def getattr(self):
@@ -184,10 +193,10 @@ class File(BaseRecord):
 
     def cloneItem(self, path):
         # Our record does not contain st_mode - only first block does
-        self.record['st_mode'] = self.getFirstBlock()["st_mode"]
+        self.record['st_mode'] = self.getFirstBlock()['st_mode']
         newItem = BaseRecord.cloneItem(self, path)
 
-        newBlock = newItem.getFirstBlock()
+        newBlock = self.getFirstBlock()
         newBlock["st_ctime"] = int(time())
         newBlock["st_nlink"] += 1
         newBlock.save()
@@ -209,3 +218,10 @@ class File(BaseRecord):
         item = self.getFirstBlock(getData=False)
         item['st_size'] = length
         item.save()
+
+    def access(self, mode):
+        if BaseRecord.access(self, mode) == -1: return -1
+        st_mode = self.getFirstBlock()['st_mode']
+        if mode & R_OK and not st_mode & S_IREAD: return -1
+        if mode & W_OK and not st_mode & S_IWRITE: return -1
+        if mode & X_OK and not st_mode & S_IEXEC: return -1

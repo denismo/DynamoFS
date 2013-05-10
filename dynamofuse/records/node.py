@@ -1,4 +1,4 @@
-from dynamofuse import BaseRecord
+from dynamofuse.base import BaseRecord
 
 __author__ = 'Denis Mikhalkin'
 

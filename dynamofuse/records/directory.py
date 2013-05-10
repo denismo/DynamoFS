@@ -1,9 +1,9 @@
-from dynamofuse import BaseRecord
+from dynamofuse.base import BaseRecord
 
 __author__ = 'Denis Mikhalkin'
 
-from dynamofuse.records.block import BlockRecord
 from errno import  ENOENT, EINVAL
+import os
 from os.path import realpath, join, dirname, basename
 from threading import Lock
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
