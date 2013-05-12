@@ -17,14 +17,13 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
+__author__ = 'Denis Mikhalkin'
+
 import dynamofuse
 from dynamofuse.records.directory import Directory
 from dynamofuse.records.file import File
 from dynamofuse.records.node import Node
 from dynamofuse.records.symlink import Symlink
-
-__author__ = 'Denis Mikhalkin'
-
 from errno import *
 from os.path import realpath
 from sys import argv, exit
@@ -39,7 +38,9 @@ from time import time
 from boto.dynamodb.condition import EQ, GT
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+from io import FileIO
 import logging
+from logging import StreamHandler, FileHandler
 import sys
 import cStringIO
 import itertools
@@ -49,6 +50,7 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 ALL_ATTRS = None
+global logStream
 
 class BotoExceptionMixin:
     log = logging.getLogger("dynamo-fuse")
@@ -56,6 +58,8 @@ class BotoExceptionMixin:
         try:
             ret = getattr(self, op)(path, *args)
             self.log.debug("<- %s: %s", op, repr(ret))
+            if logStream:
+                logStream.flush()
             return ret
         except BotoServerError, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -70,8 +74,7 @@ class BotoExceptionMixin:
             self.log.error("<- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
         except FuseOSError, e:
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("<- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("<- %s: FuseOSError(%s)", op, e.strerror)
             raise e
         except BaseException, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
@@ -135,15 +138,12 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.checkFileExists(path)
         return self.allocId()
 
-    # TODO Continue refactoring
     def utimens(self, path, times=None):
         self.log.debug("utimens(%s)", path)
         now = int(time())
         atime, mtime = times if times else (now, now)
 
         item = self.getRecordOrThrow(path)
-        if not item.isFile():
-            raise FuseOSError(EINVAL)
 
         item.utimens(atime, mtime)
 
@@ -225,6 +225,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(EEXIST)
 
         # TODO: Update parent directory time
+        type = "Node"
         if mode & S_IFDIR == S_IFDIR:
             type = "Directory"
         elif mode & S_IFLNK == S_IFLNK:
@@ -234,7 +235,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
         elif mode & S_IFREG == S_IFREG:
             type = "File"
 
-        self.createRecord(path, type, attrs={'st_mode': mode})
+        record = self.createRecord(path, type, attrs={'st_mode': mode})
+
+        # Update
+        dir = self.getRecordOrThrow(os.path.dirname(path))
+        dir.updateMCTime()
 
         return self.allocId()
 
@@ -303,13 +308,17 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(ENAMETOOLONG)
 
         item = self.getRecordOrThrow(source)
-        if not item.isFile():
+        if not item.isFile() and not item.isNode():
             raise FuseOSError(EINVAL)
 
         if self.getItemOrNone(target, attrs=[]) is not None:
             raise FuseOSError(EEXIST)
 
         item.cloneItem(target)
+
+        sourceDir = self.getRecordOrThrow(os.path.dirname(source))
+        sourceDir.updateCTime()
+
         return 0
 
     def lock(self, path, fip, cmd, lock):
@@ -351,7 +360,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs)
+            return self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True)
         except DynamoDBKeyNotFoundError:
             raise FuseOSError(ENOENT)
 
@@ -363,7 +372,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs)
+            return self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True)
         except DynamoDBKeyNotFoundError:
             return None
 
@@ -376,7 +385,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.initRecord(filepath, self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs))
+            return self.initRecord(filepath, self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True))
         except DynamoDBKeyNotFoundError:
             raise FuseOSError(ENOENT)
 
@@ -389,7 +398,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.initRecord(path, self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs))
+            return self.initRecord(path, self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True))
         except DynamoDBKeyNotFoundError:
             return None
 
@@ -414,7 +423,9 @@ if __name__ == '__main__':
         print('usage: %s <region> <dynamo table> <mount point>' % argv[0])
         exit(1)
 
-    logging.basicConfig(filename='/var/log/dynamo-fuse.log', filemode='w')
+#    logging.basicConfig(filename='/var/log/dynamo-fuse.log', filemode='w')
+    logStream = open('/var/log/dynamo-fuse.log', 'w', 0)
+    logging.basicConfig(stream=logStream)
     logging.getLogger("dynamo-fuse").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-file").setLevel(logging.DEBUG)
     logging.getLogger("fuse.log-mixin").setLevel(logging.INFO)

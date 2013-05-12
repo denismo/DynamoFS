@@ -30,7 +30,7 @@ from boto.dynamodb.types import Binary
 import logging
 import cStringIO
 from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR, S_ISLNK
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 import itertools
 
 if not hasattr(__builtins__, 'bytes'):
@@ -59,30 +59,28 @@ class File(BaseRecord):
             self.createFirstBlock(attrs['st_mode'])
 
     def getFirstBlock(self, getData=False):
-        if self.isDirectory() or self.isLink():
-            return self.record
+        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
+        #if not hasattr(self, 'firstBlock'):
+            #self.firstBlock = \
+        #return BlockRecord(self.accessor.getItemOrThrow(os.path.join(self.record["blockId"], "0"),
+        #    attrs=(["data", "st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'] if getData
+        #           else ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'])))
 
-        if not hasattr(self, 'firstBlock'):
-            self.firstBlock = BlockRecord(self.accessor.getItemOrThrow(os.path.join(self.record["blockId"], "0"),
-                attrs=(["data", "st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'] if getData
-                       else ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'])))
-
-        return self.firstBlock
+        #return self.firstBlock
 
     def getBlock(self, blockNum, getData=False):
-        return BlockRecord(self.accessor.getItemOrThrow(os.path.join(self.record["blockId"], str(blockNum)),
-            attrs=(["data"] if getData else [])))
+        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).read(getData)
 
     def createBlock(self, blockNum):
         assert blockNum != 0, "First block is a special block"
-        item = self.accessor.newItem(attrs={
+        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).create(attrs={
             "path": self.record["blockId"], "name": str(blockNum)
         })
-        item.put()
 
     def createFirstBlock(self, mode):
         l_time = int(time())
-        item = self.accessor.newItem(attrs={
+        (uid, gid, unused) = fuse_get_context()
+        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).create(attrs={
             "path": self.record["blockId"],
             "name": "0",
             "st_nlink": 1,
@@ -90,9 +88,10 @@ class File(BaseRecord):
             "st_atime": l_time,
             "st_ctime": l_time,
             "st_mode":  mode,
-            "st_size": 0
+            "st_size": 0,
+            'st_gid': gid, 'st_uid': uid,
+            "version": 1
         })
-        item.put()
 
     def updateCTime(self):
         block = self.getFirstBlock()
@@ -117,6 +116,7 @@ class File(BaseRecord):
     def getattr(self):
         block = self.getFirstBlock()
         block["st_blocks"] = (block["st_size"] + self.record["st_blksize"]-1)/self.record["st_blksize"]
+        block["st_ino"] = int(self.record["blockId"])
         return block.item
 
     def utimens(self, atime, mtime):
@@ -129,7 +129,7 @@ class File(BaseRecord):
         block = self.getFirstBlock()
         block["st_nlink"] -= 1
         if not block["st_nlink"]:
-            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
+            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'], consistent_read=True)
             # TODO Pagination
             for entry in items:
                 entry.delete()
@@ -203,8 +203,9 @@ class File(BaseRecord):
 
     def truncate(self, length, fh=None):
         lastBlock = length / self.accessor.BLOCK_SIZE
+        l_time = int(time())
 
-        items = self.accessor.table.query(hash_key=self.path, range_key_condition=GT(str(lastBlock)), attributes_to_get=['name', "path"])
+        items = self.accessor.table.query(hash_key=self.path, range_key_condition=GT(str(lastBlock)), attributes_to_get=['name', "path"], consistent_read=True)
         # TODO Pagination
         for entry in items:
             entry.delete()
@@ -217,6 +218,8 @@ class File(BaseRecord):
 
         item = self.getFirstBlock(getData=False)
         item['st_size'] = length
+        item['st_ctime'] = l_time
+        item['st_mtime'] = l_time
         item.save()
 
     def access(self, mode):

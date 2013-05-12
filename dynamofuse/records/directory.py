@@ -27,7 +27,7 @@ class Directory(BaseRecord):
         return self.record
 
     def list(self):
-        items = self.accessor.table.query(self.path, attributes_to_get=['name'])
+        items = self.accessor.table.query(self.path, attributes_to_get=['name'], consistent_read=True)
 
         for entry in items:
             if entry['name'] == "/":

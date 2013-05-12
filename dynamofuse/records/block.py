@@ -34,12 +34,32 @@ import cStringIO
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
+blockCache = dict()
+blockLog = logging.getLogger("dynamo-fuse-block")
+
 class BlockRecord:
+    BLOCK_ATTRS = ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize', 'version']
+    BLOCK_ALL_ATTRS = ["data"] + BLOCK_ATTRS
+
     log = logging.getLogger("dynamo-fuse-block")
     item = None
+    accessor = None
+    path = None
 
-    def __init__(self, item):
-        self.item = item
+    def __init__(self, accessor, path):
+        self.accessor = accessor
+        self.path = path
+
+    def read(self, getData=False):
+        self.item = BlockRecord.getBlockItem(self.accessor, self.path, getData)
+        return self
+
+    def create(self, attrs):
+        self.item = self.accessor.newItem(attrs)
+        self.item["version"] = 1
+        self.item.put()
+        BlockRecord.cacheItem(self.path, self.item, self.item["version"])
+        return self
 
     def __getitem__(self, key):
         return self.item[key]
@@ -52,7 +72,9 @@ class BlockRecord:
         return item in self.item
 
     def save(self):
+        self.item.add_attribute("version", 1)
         self.item.save()
+        BlockRecord.cacheItem(self.path, self.item, self.item["version"] + 1)
 
     def writeData(self, startOffset, dataSlice):
         if "data" in self.item:
@@ -62,3 +84,24 @@ class BlockRecord:
         else:
             self.log.debug("write block %s has NO data", self.item["name"])
             self.item['data'] = Binary(dataSlice)
+
+    @staticmethod
+    def getBlockItem(accessor, path, getData=False):
+        blockItem = accessor.getItemOrThrow(path, attrs=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
+        cachedBlockItem = BlockRecord.getCachedBlockItem(path)
+        if cachedBlockItem and blockItem["version"] < cachedBlockItem["version"] and (getData and "data" in cachedBlockItem or not getData):
+            blockLog.debug('Returning cached block item for %s', path)
+            return cachedBlockItem
+        return blockItem
+
+    @staticmethod
+    def getCachedBlockItem(path):
+        try:
+            return blockCache[path]
+        except:
+            return None
+
+    @staticmethod
+    def cacheItem(path, item, version):
+        item["version"] = version
+        blockCache[path] = item

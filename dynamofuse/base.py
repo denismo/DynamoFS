@@ -93,6 +93,8 @@ class BaseRecord:
         del attrs['path']
         newItem = self.__class__()
         newItem.create(self.accessor, path, attrs)
+
+        self.updateDirectoryMTime(path)
         return newItem
 
     def getattr(self):
@@ -114,7 +116,28 @@ class BaseRecord:
 
     def updateCTime(self):
         self.record['st_ctime'] = int(time())
+        # TODO Concurrency
         self.record.save()
+
+    def updateMTime(self):
+        self.record['st_mtime'] = int(time())
+        # TODO Concurrency
+        self.record.save()
+
+    def updateMCTime(self):
+        l_time = int(time())
+        self.record['st_mtime'] = l_time
+        self.record['st_ctime'] = l_time
+        # TODO Concurrency
+        self.record.save()
+
+    def updateDirectoryMTime(self, filepath):
+        dir = self.accessor.getRecordOrThrow(os.path.dirname(filepath))
+        dir.updateMTime()
+
+    def updateDirectoryMCTime(self, filepath):
+        dir = self.accessor.getRecordOrThrow(os.path.dirname(filepath))
+        dir.updateMCTime()
 
     def isFile(self):
         return self.record["type"] == "File"
@@ -124,6 +147,9 @@ class BaseRecord:
 
     def isLink(self):
         return self.record["type"] == "Symlink"
+
+    def isNode(self):
+        return self.record["type"] == "Node"
 
     def __getitem__(self, item):
         return self.record[item]
@@ -137,3 +163,9 @@ class BaseRecord:
     def access(self, mode):
         if mode == F_OK:
             return 0
+
+    def utimens(self, atime, mtime):
+        block = self.record
+        block['st_atime'] = atime
+        block['st_mtime'] = mtime
+        block.save()
