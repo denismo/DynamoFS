@@ -50,6 +50,8 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 ALL_ATTRS = None
+NAME_MAX=255 # To match what is expected by Fuse and FSTest
+KEY_MAX=1024
 global logStream
 
 class BotoExceptionMixin:
@@ -184,6 +186,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if old == "/" or new == "/":
             raise FuseOSError(EINVAL)
 
+        self.checkPath(new)
+
         item = self.getRecordOrThrow(old)
         newItem = self.getItemOrNone(new, attrs=[])
         if not newItem is None:
@@ -203,9 +207,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def symlink(self, target, source):
         self.log.debug("symlink(%s, %s)", target, source)
-        if len(target) > 1024:
-            raise FuseOSError(ENAMETOOLONG)
 
+        # getItemOrNone will check path
         item = self.getItemOrNone(target, attrs=[])
         if item is not None:
             raise FuseOSError(EEXIST)
@@ -217,9 +220,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def create(self, path, mode, fh=None):
         self.log.debug("create(%s, %d)", path, mode)
-        if len(path) > 1024:
-            raise FuseOSError(ENAMETOOLONG)
 
+        # getItemOrNone will check path
         item = self.getItemOrNone(path, attrs=[])
         if item is not None:
             raise FuseOSError(EEXIST)
@@ -235,7 +237,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         elif mode & S_IFREG == S_IFREG:
             type = "File"
 
-        record = self.createRecord(path, type, attrs={'st_mode': mode})
+        self.createRecord(path, type, attrs={'st_mode': mode})
 
         # Update
         dir = self.getRecordOrThrow(os.path.dirname(path))
@@ -256,7 +258,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             f_favail=sys.maxint - 1,
             f_fsid=0,
             f_flag=0,
-            f_namemax=1024
+            f_namemax=NAME_MAX
         )
 
     def destroy(self, path):
@@ -304,8 +306,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def link(self, target, source):
         self.log.debug("link(%s, %s)", target, source)
-        if len(target) > 1024:
-            raise FuseOSError(ENAMETOOLONG)
 
         item = self.getRecordOrThrow(source)
         if not item.isFile() and not item.isNode():
@@ -339,6 +339,18 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         # ============ PRIVATE ====================
 
+    def checkPath(self, path):
+        if len(path) > 4096:
+            raise FuseOSError(ENAMETOOLONG)
+
+        name = os.path.basename(path)
+        if name == "":
+            name = "/"
+        if len(name) > min(NAME_MAX, KEY_MAX):
+            raise FuseOSError(ENAMETOOLONG)
+        if len(os.path.dirname(path)) > KEY_MAX:
+            raise FuseOSError(ENAMETOOLONG)
+
     def fileCount(self):
         self.table.refresh()
         return self.table.item_count
@@ -353,6 +365,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return self.table.new_item(attrs=attrs)
 
     def getItemOrThrow(self, filepath, attrs=None):
+        self.checkPath(filepath)
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
             if not "path" in attrs: attrs.append("path")
@@ -365,6 +378,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(ENOENT)
 
     def getItemOrNone(self, path, attrs=None):
+        self.checkPath(path)
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
             if not "path" in attrs: attrs.append("path")
@@ -377,6 +391,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             return None
 
     def getRecordOrThrow(self, filepath, attrs=None):
+        self.checkPath(filepath)
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
             if not "path" in attrs: attrs.append("path")
@@ -390,6 +405,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(ENOENT)
 
     def getRecordOrNone(self, path, attrs=None):
+        self.checkPath(path)
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
             if not "path" in attrs: attrs.append("path")
@@ -433,6 +449,6 @@ if __name__ == '__main__':
     logging.getLogger("dynamo-fuse-master").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-block").setLevel(logging.DEBUG)
 
-    fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True)
+    fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=True, kernel_cache=False, direct_io=True, allow_other=True)
 
 
