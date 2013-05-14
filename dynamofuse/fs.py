@@ -17,6 +17,8 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
+from dynamofuse.base import BaseRecord
+
 __author__ = 'Denis Mikhalkin'
 
 import dynamofuse
@@ -181,6 +183,28 @@ class DynamoFS(BotoExceptionMixin, Operations):
         item.delete()
 
     def rename(self, old, new):
+        '''
+        oldpath can specify a directory. In this case, newpath must either not exist, or it must specify an empty directory.
+
+However, when overwriting there will probably be a window in which both oldpath and newpath refer to the file being renamed.
+
+If oldpath refers to a symbolic link the link is renamed; if newpath refers to a symbolic link the link will be overwritten.
+
+EINVAL
+The new pathname contained a path prefix of the old, or, more generally, an attempt was made to make a directory a subdirectory of itself.
+
+EISDIR
+newpath is an existing directory, but oldpath is not a directory.
+
+ENOENT
+The link named by oldpath does not exist; or, a directory component in newpath does not exist; or, oldpath or newpath is an empty string.
+
+ENOTDIR
+A component used as a directory in oldpath or newpath is not, in fact, a directory. Or, oldpath is a directory, and newpath exists but is not a directory.
+
+ENOTEMPTY or EEXIST
+newpath is a nonempty directory, that is, contains entries other than "." and "..".
+        '''
         self.log.debug("rename(%s, %s)", old, new)
         if old == new: return
         if old == "/" or new == "/":
@@ -189,11 +213,19 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.checkPath(new)
 
         item = self.getRecordOrThrow(old)
-        newItem = self.getItemOrNone(new, attrs=[])
-        if not newItem is None:
-            raise FuseOSError(EEXIST)
-        else:
-            item.moveTo(new)
+        newItem = self.getRecordOrNone(new)
+        if item.isDirectory():
+            if not newItem is None:
+                if not newItem.isDirectory():
+                    raise FuseOSError(EISDIR)
+                if not newItem.isEmpty():
+                    raise FuseOSError(ENOTEMPTY)
+
+        newDir = self.getItemOrNone(os.path.dirname(new), attrs=['type'])
+        if newDir is None or not ('type' in newDir and newDir["type"] == "Directory"):
+            raise FuseOSError(ENOENT)
+
+        item.moveTo(new)
 
     def readlink(self, path):
         self.log.debug("readlink(%s)", path)
@@ -240,8 +272,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.createRecord(path, type, attrs={'st_mode': mode})
 
         # Update
-        dir = self.getRecordOrThrow(os.path.dirname(path))
-        dir.updateMCTime()
+        if path != "/":
+            dir = self.getRecordOrThrow(os.path.dirname(path))
+            dir.updateMCTime()
 
         return self.allocId()
 
@@ -345,6 +378,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         name = os.path.basename(path)
         if name == "":
+            if os.path.dirname(path) != "/":
+                raise FuseOSError(EINVAL)
             name = "/"
         if len(name) > min(NAME_MAX, KEY_MAX):
             raise FuseOSError(ENAMETOOLONG)
@@ -449,6 +484,6 @@ if __name__ == '__main__':
     logging.getLogger("dynamo-fuse-master").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-block").setLevel(logging.DEBUG)
 
-    fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=True, kernel_cache=False, direct_io=True, allow_other=True)
+    fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True)
 
 

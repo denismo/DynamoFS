@@ -90,6 +90,7 @@ class File(BaseRecord):
             "st_mode":  mode,
             "st_size": 0,
             'st_gid': gid, 'st_uid': uid,
+            'st_ino': int(self.record["blockId"]),
             "version": 1
         })
 
@@ -191,10 +192,10 @@ class File(BaseRecord):
         finally:
             data.close()
 
-    def cloneItem(self, path):
+    def cloneItem(self, path, unused=None):
         # Our record does not contain st_mode - only first block does
         self.record['st_mode'] = self.getFirstBlock()['st_mode']
-        newItem = BaseRecord.cloneItem(self, path)
+        BaseRecord.cloneItem(self, path)
 
         newBlock = self.getFirstBlock()
         newBlock["st_ctime"] = int(time())

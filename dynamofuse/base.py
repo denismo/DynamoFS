@@ -66,7 +66,8 @@ class BaseRecord:
                     'st_nlink': 1,
                     'st_size': 0, 'st_ctime': l_time,
                     'st_mtime': l_time, 'st_atime': l_time,
-                    'st_gid': gid, 'st_uid': uid
+                    'st_gid': gid, 'st_uid': uid,
+                    'st_ino': attrs['st_ino'] if 'st_ino' in attrs else self.accessor.allocUniqueId()
         }
         for k, v in attrs.items():
             newAttrs[k] = v
@@ -87,10 +88,17 @@ class BaseRecord:
 
         self.delete()
 
-    def cloneItem(self, path):
+    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId']):
         attrs=dict(self.record)
         del attrs['name']
         del attrs['path']
+        if attrsToPreserve:
+            toDelete = []
+            for attr in attrs.keys():
+                if not attr in attrsToPreserve:
+                    toDelete.append(attr)
+            for attr in toDelete:
+                del attrs[attr]
         newItem = self.__class__()
         newItem.create(self.accessor, path, attrs)
 
@@ -144,6 +152,10 @@ class BaseRecord:
 
     def isDirectory(self):
         return self.record["type"] == "Directory"
+
+    @staticmethod
+    def isDirectoryItem(item):
+        return "type" in item and item['type'] == 'Directory'
 
     def isLink(self):
         return self.record["type"] == "Symlink"

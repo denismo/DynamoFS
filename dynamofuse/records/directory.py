@@ -35,7 +35,7 @@ class Directory(BaseRecord):
             yield entry['name']
 
     def moveTo(self, newPath):
-        self.cloneItem(newPath)
+        self.cloneItem(newPath, ['type', 'st_nlink', 'st_size', 'st_ino', 'st_mode'])
 
         self.moveDirectory(newPath)
 
@@ -45,3 +45,6 @@ class Directory(BaseRecord):
         for entry in self.accessor.readdir(self.path):
             if entry == "." or entry == "..": continue
             self.accessor.rename(os.path.join(self.path, entry), os.path.join(new, entry))
+
+    def isEmpty(self):
+        return len(list(self.accessor.table.query(self.path, attributes_to_get=['name'], consistent_read=True))) == 0
