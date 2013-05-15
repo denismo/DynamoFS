@@ -245,9 +245,9 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
         if item is not None:
             raise FuseOSError(EEXIST)
 
-        self.createRecord(target, "Symlink", attrs={'symlink': source})
+        record = self.createRecord(target, "Symlink", attrs={'symlink': source})
+        record.updateDirectoryMCTime(target)
 
-        # TODO: Update parent directory time
         return 0
 
     def create(self, path, mode, fh=None):
