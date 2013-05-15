@@ -83,6 +83,8 @@ class BaseRecord:
     def delete(self):
         self.record.delete()
 
+        self.updateDirectoryMCTime(self.path)
+
     def moveTo(self, newPath):
         self.cloneItem(newPath)
 
