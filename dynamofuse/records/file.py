@@ -122,6 +122,7 @@ class File(BaseRecord):
     def delete(self):
         block = self.getFirstBlock()
         block["st_nlink"] -= 1
+        block['st_ctime'] = int(time())
         if not block["st_nlink"]:
             items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'],
                 consistent_read=True)
