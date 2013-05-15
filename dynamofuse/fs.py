@@ -258,7 +258,6 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
         if item is not None:
             raise FuseOSError(EEXIST)
 
-        # TODO: Update parent directory time
         type = "Node"
         if mode & S_IFDIR == S_IFDIR:
             type = "Directory"
@@ -269,12 +268,11 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
         elif mode & S_IFREG == S_IFREG:
             type = "File"
 
-        self.createRecord(path, type, attrs={'st_mode': mode})
+        record = self.createRecord(path, type, attrs={'st_mode': mode})
 
         # Update
         if path != "/":
-            dir = self.getRecordOrThrow(os.path.dirname(path))
-            dir.updateMCTime()
+            record.updateDirectoryMCTime(path)
 
         return self.allocId()
 

@@ -60,13 +60,6 @@ class File(BaseRecord):
 
     def getFirstBlock(self, getData=False):
         return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
-        #if not hasattr(self, 'firstBlock'):
-            #self.firstBlock = \
-        #return BlockRecord(self.accessor.getItemOrThrow(os.path.join(self.record["blockId"], "0"),
-        #    attrs=(["data", "st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'] if getData
-        #           else ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize'])))
-
-        #return self.firstBlock
 
     def getBlock(self, blockNum, getData=False):
         return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).read(getData)
@@ -87,7 +80,7 @@ class File(BaseRecord):
             "st_mtime": l_time,
             "st_atime": l_time,
             "st_ctime": l_time,
-            "st_mode":  mode,
+            "st_mode": mode,
             "st_size": 0,
             'st_gid': gid, 'st_uid': uid,
             'st_ino': int(self.record["blockId"]),
@@ -116,7 +109,7 @@ class File(BaseRecord):
 
     def getattr(self):
         block = self.getFirstBlock()
-        block["st_blocks"] = (block["st_size"] + self.record["st_blksize"]-1)/self.record["st_blksize"]
+        block["st_blocks"] = (block["st_size"] + self.record["st_blksize"] - 1) / self.record["st_blksize"]
         block["st_ino"] = int(self.record["blockId"])
         return block.item
 
@@ -130,7 +123,8 @@ class File(BaseRecord):
         block = self.getFirstBlock()
         block["st_nlink"] -= 1
         if not block["st_nlink"]:
-            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'], consistent_read=True)
+            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'],
+                consistent_read=True)
             # TODO Pagination
             for entry in items:
                 entry.delete()
@@ -149,17 +143,17 @@ class File(BaseRecord):
 
     def _write(self, data, offset):
         startBlock = offset / self.accessor.BLOCK_SIZE
-        endBlock = (offset + len(data)-1) / self.accessor.BLOCK_SIZE
+        endBlock = (offset + len(data) - 1) / self.accessor.BLOCK_SIZE
         initialBlockOffset = self.accessor.BLOCK_SIZE - (offset % self.accessor.BLOCK_SIZE)
         blockOffset = 0
         self.log.debug("write start=%d, last=%d, initial offset %d", startBlock, endBlock, initialBlockOffset)
-        for blockNum in range(startBlock, endBlock+1):
+        for blockNum in range(startBlock, endBlock + 1):
             block = self.getBlock(blockNum, getData=True)
             if block is None:
                 self.log.debug("write block %d is None", blockNum)
                 block = self.createBlock(blockNum)
             dataSlice = data[0:initialBlockOffset] if blockNum == startBlock else\
-                data[blockOffset: blockOffset + self.accessor.BLOCK_SIZE]
+            data[blockOffset: blockOffset + self.accessor.BLOCK_SIZE]
 
             self.log.debug("write block %d slice length %d from offset %d", blockNum, len(dataSlice), blockOffset)
             blockOffset += len(dataSlice)
@@ -169,11 +163,11 @@ class File(BaseRecord):
 
     def read(self, offset, size):
         startBlock = offset / self.accessor.BLOCK_SIZE
-        endBlock = (offset + size-1) / self.accessor.BLOCK_SIZE
+        endBlock = (offset + size - 1) / self.accessor.BLOCK_SIZE
         data = cStringIO.StringIO()
         try:
             self.log.debug("read blocks [%d .. %d]", startBlock, endBlock)
-            for block in range(startBlock, endBlock+1):
+            for block in range(startBlock, endBlock + 1):
                 item = self.getBlock(block, getData=True)
                 if item is None:
                     self.log.debug("read block %d does not exist", block)
@@ -184,7 +178,8 @@ class File(BaseRecord):
                 itemData = item["data"].value
                 writeLen = min(size, self.accessor.BLOCK_SIZE, len(itemData))
                 startOffset = (offset % self.accessor.BLOCK_SIZE) if block == startBlock else 0
-                self.log.debug("read block %d has %d data, writing %d from %d", block, len(itemData), writeLen, startOffset)
+                self.log.debug("read block %d has %d data, writing %d from %d", block, len(itemData), writeLen,
+                    startOffset)
                 data.write(itemData[startOffset:startOffset + writeLen])
                 size -= writeLen
 
@@ -206,16 +201,24 @@ class File(BaseRecord):
         lastBlock = length / self.accessor.BLOCK_SIZE
         l_time = int(time())
 
-        items = self.accessor.table.query(hash_key=self.path, range_key_condition=GT(str(lastBlock)), attributes_to_get=['name', "path"], consistent_read=True)
+        items = self.accessor.table.query(hash_key=self.path, range_key_condition=GT(str(lastBlock)),
+            attributes_to_get=['name', "path"], consistent_read=True)
         # TODO Pagination
         for entry in items:
             entry.delete()
 
         if length:
-            lastItem = self.getBlock(lastBlock, getData=True)
-            if lastItem is not None and "data" in lastItem:
-                lastItem['data'] = Binary(lastItem['data'].value[0:(length % self.accessor.BLOCK_SIZE)])
-                lastItem.save()
+            try:
+                lastItem = self.getBlock(lastBlock, getData=True)
+                if lastItem is not None and "data" in lastItem:
+                    lastItem['data'] = Binary(lastItem['data'].value[0:(length % self.accessor.BLOCK_SIZE)])
+                    lastItem.save()
+            except FuseOSError, fe:
+                # Block is missing - so nothing to update
+                if fe.errno == ENOENT:
+                    pass
+                else:
+                    raise fe
 
         item = self.getFirstBlock(getData=False)
         item['st_size'] = length

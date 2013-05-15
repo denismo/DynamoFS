@@ -87,8 +87,15 @@ class BlockRecord:
 
     @staticmethod
     def getBlockItem(accessor, path, getData=False):
-        blockItem = accessor.getItemOrThrow(path, attrs=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
+        blockItem = accessor.getItemOrNone(path, attrs=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
         cachedBlockItem = BlockRecord.getCachedBlockItem(path)
+        if not blockItem:
+            if cachedBlockItem and (getData and "data" in cachedBlockItem or not getData):
+                blockLog.debug('Returning cached block item for %s', path)
+                return cachedBlockItem
+            else:
+                blockLog.debug('Unable to find block or cached block for %s', path)
+                raise FuseOSError(ENOENT)
         if cachedBlockItem and blockItem["version"] < cachedBlockItem["version"] and (getData and "data" in cachedBlockItem or not getData):
             blockLog.debug('Returning cached block item for %s', path)
             return cachedBlockItem
@@ -103,5 +110,6 @@ class BlockRecord:
 
     @staticmethod
     def cacheItem(path, item, version):
+        blockLog.debug('Caching block for %s', path)
         item["version"] = version
         blockCache[path] = item
