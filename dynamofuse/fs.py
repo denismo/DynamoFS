@@ -365,7 +365,16 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
     def mknod(self, path, mode, dev):
         self.log.debug("mknod(%s, mode=%d, dev=%d)", path, mode, dev)
 
-        self.createRecord(path, "Node", attrs={'st_mode': mode, 'st_rdev': dev})
+        item = self.getItemOrNone(path, attrs=[])
+        if item is not None:
+            raise FuseOSError(EEXIST)
+
+        record = self.createRecord(path, "File", attrs={'st_mode': mode, 'st_rdev': dev})
+
+        # Update
+        if path != "/":
+            record.updateDirectoryMCTime(path)
+
         return 0
 
         # ============ PRIVATE ====================
