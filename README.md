@@ -33,7 +33,7 @@ Limitations
 so any mission-critical usage is not yet recommended. However, the implementation is already almost POSIX-compliant (only 19 out of all [fstest](http://www.tuxera.com/community/posix-test-suite/)
  are failing).
 
-However, the behavior during concurrent access to the same files or directories is not well handled at the moment and may result in inconsistent results.
+However, the behavior during concurrent access to the same files or directories by different clients (different server instances) is not well handled at the moment and may result in inconsistent results.
 Also, locking is not supported yet.
 
 License
