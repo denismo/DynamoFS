@@ -29,7 +29,7 @@ The user with these keys must have read/write access to the specified AWS Dynamo
 Limitations
 ===========
 
-**Note: This project is in its early R&D stage. Various designs and implementation strategies are being tried for file system operations
+**Note**: This project is in its early R&D stage. Various designs and implementation strategies are being tried for file system operations
 so any mission-critical usage is not yet recommended. However, the implementation is already almost POSIX-compliant (only 19 out of all [fstest](http://www.tuxera.com/community/posix-test-suite/)
  are failing).
 
