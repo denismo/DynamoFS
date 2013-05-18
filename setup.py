@@ -15,7 +15,7 @@ with open('README.md') as readme:
 
 setup(
     name = 'dynamo-fuse',
-    version = '0.1.0',
+    version = '0.1.1',
 
     description = 'Linux FUSE file system implementation with AWS DynamoDB as the storage',
     long_description = documentation,
@@ -24,9 +24,8 @@ setup(
     maintainer = 'Denis Mikhalkin',
     maintainer_email = 'denismo@yahoo.com',
     license = 'GNU General Public License, version 3',
-    py_modules=['dynamofuse'],
     url = 'https://github.com/denismo/dynamo-fuse',
-    packages=['fusepy'],
+    packages=['dynamofuse', 'dynamofuse.records'],
 
     use_2to3 = True,
     # only use the following fixers (everything else is already compatible)
@@ -38,7 +37,7 @@ setup(
 
     classifiers = [
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: GNU General Public License, version 3',
+        'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Operating System :: POSIX',
         'Operating System :: Unix',
         'Programming Language :: Python :: 2',
