@@ -26,7 +26,7 @@ setup(
     license = 'GNU General Public License, version 3',
     py_modules=['dynamofuse'],
     url = 'https://github.com/denismo/dynamo-fuse',
-    packages=['python-fuse'],
+    packages=['fusepy'],
 
     use_2to3 = True,
     # only use the following fixers (everything else is already compatible)
