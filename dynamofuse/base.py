@@ -81,6 +81,9 @@ class BaseRecord:
         self.path = path
         self.record = record
 
+    def getRecord(self):
+        return self.record
+
     def delete(self):
         self.record.delete()
 
@@ -112,16 +115,24 @@ class BaseRecord:
         return self.record
 
     def chmod(self, mode):
-        block = self.record
+        block = self.getRecord()
+
+        self.permitPrivilegedOrOwner(block)
+
         block['st_mode'] &= 0770000
         block['st_mode'] |= mode
+        self.checkSetGid(block)
         block['st_ctime'] = int(time())
         block.save()
 
     def chown(self, uid, gid):
-        block = self.record
-        block['st_uid'] = uid
-        block['st_gid'] = gid
+        block = self.getRecord()
+
+        self.permitPrivilegedOnly(block, uid, gid)
+        self.permitOwnerToGroup(block, uid, gid)
+
+        if uid != -1: block['st_uid'] = uid
+        if gid != -1: block['st_gid'] = gid
         block['st_ctime'] = int(time())
         block.save()
 
@@ -230,7 +241,31 @@ class BaseRecord:
         return 0
 
     def utimens(self, atime, mtime):
-        block = self.record
+        block = self.getRecord()
         block['st_atime'] = atime
         block['st_mtime'] = mtime
         block.save()
+
+    def permitPrivilegedOnly(self, block, uid, gid):
+        if block['st_uid'] != uid and uid != -1:
+            (ouid, unused, unused) = fuse_get_context()
+            if ouid:
+                self.log.debug('permitPrivilegedOnly: owner is not privileged %d => %d, owner %d', block['st_uid'], uid, ouid)
+                raise FuseOSError(EPERM)
+
+    def permitOwnerToGroup(self, block, uid, gid):
+        if block['st_gid'] != gid and gid != -1:
+            (ouid, ogid, unused) = fuse_get_context()
+            if block['st_uid'] != ouid and ouid or gid != ogid and ogid:
+                self.log.debug('permitOwnerToGroup: not allowed %d != %d or %d != %d', block['st_uid'], ouid, gid, ogid)
+                raise FuseOSError(EPERM)
+
+    def permitPrivilegedOrOwner(self, block):
+        (ouid, unused, unused) = fuse_get_context()
+        if block['st_uid'] != ouid and ouid:
+            raise FuseOSError(EPERM)
+
+    def checkSetGid(self, block):
+        (ouid, ogid, unused) = fuse_get_context()
+        if ouid and ogid != block['st_gid']:
+            block['st_mode'] &= ~S_ISGID

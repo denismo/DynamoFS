@@ -113,21 +113,18 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not self.table.has_item("/", "/"):
             self.mkdir("/", 0755)
 
-    # TODO Implement access
-#    def access(self, path, amode):
-#        self.log.debug("access(%s, %x)", path, amode)
-#
-#        item = self.getRecordOrThrow(path)
-#        return item.access(amode)
-
     def chmod(self, path, mode):
         self.log.debug("chmod(%s, mode=%d)", path, mode)
+
+        self.checkAccess(os.path.dirname(path), X_OK)
 
         self.getRecordOrThrow(path).chmod(mode)
         return 0
 
     def chown(self, path, uid, gid):
         self.log.debug("chown(%s, uid=%d, gid=%d)", path, uid, gid)
+
+        self.checkAccess(os.path.dirname(path), X_OK)
 
         self.getRecordOrThrow(path).chown(uid, gid)
         return 0

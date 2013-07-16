@@ -19,7 +19,7 @@ __author__ = 'Denis Mikhalkin'
 from posix import R_OK, X_OK, W_OK
 from dynamofuse.records.block import BlockRecord
 from dynamofuse.base import BaseRecord
-from errno import  ENOENT, EINVAL
+from errno import  ENOENT, EINVAL, EPERM
 import os
 from os.path import realpath, join, dirname, basename
 from threading import Lock
@@ -92,20 +92,30 @@ class File(BaseRecord):
         block['st_ctime'] = int(time())
         block.save()
 
-    ################# OPERATIONS ##########################
-    def chmod(self, mode):
-        block = self.getFirstBlock()
-        block['st_mode'] &= 0770000
-        block['st_mode'] |= mode
-        block['st_ctime'] = int(time())
-        block.save()
+    def getRecord(self):
+        return self.getFirstBlock()
 
-    def chown(self, uid, gid):
-        block = self.getFirstBlock()
-        block['st_uid'] = uid
-        block['st_gid'] = gid
-        block['st_ctime'] = int(time())
-        block.save()
+    ################# OPERATIONS ##########################
+#    def chmod(self, mode):
+#        block = self.getFirstBlock()
+#
+#        self.permitPrivilegedOrOwner(block)
+#
+#        block['st_mode'] &= 0770000
+#        block['st_mode'] |= mode
+#        self.checkSetGid(block)
+#        block['st_ctime'] = int(time())
+#        block.save()
+#
+#    def chown(self, uid, gid):
+#        block = self.getFirstBlock()
+#        self.permitPrivilegedOnly(block, uid, gid)
+#        self.permitOwnerToGroup(block, uid, gid)
+#
+#        if uid != -1: block['st_uid'] = uid
+#        if gid != -1: block['st_gid'] = gid
+#        block['st_ctime'] = int(time())
+#        block.save()
 
     def getattr(self):
         block = self.getFirstBlock()
@@ -113,11 +123,11 @@ class File(BaseRecord):
         block["st_ino"] = int(self.record["blockId"])
         return block.item
 
-    def utimens(self, atime, mtime):
-        block = self.getFirstBlock()
-        block['st_atime'] = atime
-        block['st_mtime'] = mtime
-        block.save()
+#    def utimens(self, atime, mtime):
+#        block = self.getFirstBlock()
+#        block['st_atime'] = atime
+#        block['st_mtime'] = mtime
+#        block.save()
 
     def delete(self):
         block = self.getFirstBlock()
