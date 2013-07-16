@@ -49,12 +49,3 @@ class Directory(BaseRecord):
 
     def isEmpty(self):
         return len(list(self.accessor.table.query(self.path, attributes_to_get=['name'], consistent_read=True))) == 0
-
-    def access(self, mode):
-        block = self.record
-        st_mode = block['st_mode']
-        st_uid = block['st_uid']
-        st_gid = block['st_gid']
-        if not self.modeAccess(mode, st_mode, st_uid, st_gid): return 0
-
-        return BaseRecord.access(self, mode)

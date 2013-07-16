@@ -96,38 +96,12 @@ class File(BaseRecord):
         return self.getFirstBlock()
 
     ################# OPERATIONS ##########################
-#    def chmod(self, mode):
-#        block = self.getFirstBlock()
-#
-#        self.permitPrivilegedOrOwner(block)
-#
-#        block['st_mode'] &= 0770000
-#        block['st_mode'] |= mode
-#        self.checkSetGid(block)
-#        block['st_ctime'] = int(time())
-#        block.save()
-#
-#    def chown(self, uid, gid):
-#        block = self.getFirstBlock()
-#        self.permitPrivilegedOnly(block, uid, gid)
-#        self.permitOwnerToGroup(block, uid, gid)
-#
-#        if uid != -1: block['st_uid'] = uid
-#        if gid != -1: block['st_gid'] = gid
-#        block['st_ctime'] = int(time())
-#        block.save()
 
     def getattr(self):
         block = self.getFirstBlock()
         block["st_blocks"] = (block["st_size"] + self.record["st_blksize"] - 1) / self.record["st_blksize"]
         block["st_ino"] = int(self.record["blockId"])
         return block.item
-
-#    def utimens(self, atime, mtime):
-#        block = self.getFirstBlock()
-#        block['st_atime'] = atime
-#        block['st_mtime'] = mtime
-#        block.save()
 
     def delete(self):
         block = self.getFirstBlock()
@@ -236,18 +210,3 @@ class File(BaseRecord):
         item['st_ctime'] = l_time
         item['st_mtime'] = l_time
         item.save()
-
-    def access(self, mode):
-        '''
-The mode specifies the accessibility check(s) to be performed, and is either the value F_OK, or a mask consisting of the bitwise OR of one or more of R_OK, W_OK, and X_OK. F_OK tests for the existence of the file. R_OK, W_OK, and X_OK test whether the file exists and grants read, write, and execute permissions, respectively.
-
-The check is done using the calling process's real UID and GID, rather than the effective IDs as is done when actually attempting an operation (e.g., open(2)) on the file. This allows set-user-ID programs to easily determine the invoking user's authority.
-
-If the calling process is privileged (i.e., its real UID is zero), then an X_OK check is successful for a regular file if execute permission is enabled for any of the file owner, group, or other.
-'''
-        block = self.getFirstBlock()
-        st_mode = block['st_mode']
-        st_uid = block['st_uid']
-        st_gid = block['st_gid']
-        if not self.modeAccess(mode, st_mode, st_uid, st_gid): return 0
-        return BaseRecord.access(self, mode)

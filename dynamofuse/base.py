@@ -189,6 +189,12 @@ class BaseRecord:
     def access(self, mode):
         if mode == F_OK:
             return 0
+
+        block = self.getRecord()
+        st_mode = block['st_mode']
+        st_uid = block['st_uid']
+        st_gid = block['st_gid']
+        if not self.modeAccess(mode, st_mode, st_uid, st_gid): return 0
         return -1
 
     def modeAccess(self, mode, st_mode, st_uid, st_gid):
@@ -207,37 +213,6 @@ class BaseRecord:
             if not (uid == st_uid and st_mode & S_IXUSR or gid == st_gid and st_mode & S_IXGRP or st_mode & S_IXOTH):
                 return -1
 
-        '''if mode & R_OK:
-            if uid == st_uid and not st_mode & S_IRUSR:
-                self.log.debug("access - failed user read test")
-                return -1
-            elif gid == st_gid and not st_mode & S_IRGRP:
-                self.log.debug("access - failed group read test")
-                return -1
-            elif not st_mode & S_IROTH:
-                self.log.debug("access - failed other read test")
-                return -1
-        if mode & W_OK:
-            if uid == st_uid and not st_mode & S_IWUSR:
-                self.log.debug("access - failed user write test")
-                return -1
-            elif gid == st_gid and not st_mode & S_IWGRP:
-                self.log.debug("access - failed group write test")
-                return -1
-            elif not st_mode & S_IWOTH:
-                self.log.debug("access - failed other write test")
-                return -1
-        if mode & X_OK:
-            if uid == st_uid and not st_mode & S_IXUSR:
-                self.log.debug("access - failed user exec test")
-                return -1
-            elif gid == st_gid and not st_mode & S_IXGRP:
-                self.log.debug("access - failed group exec test")
-                return -1
-            elif not st_mode & S_IXOTH:
-                self.log.debug("access - failed other exec test")
-                return -1
-                '''
         return 0
 
     def utimens(self, atime, mtime):
