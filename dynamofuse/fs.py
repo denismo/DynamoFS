@@ -22,6 +22,7 @@ from dynamofuse.base import BaseRecord
 __author__ = 'Denis Mikhalkin'
 
 import dynamofuse
+from posix import R_OK, X_OK, W_OK
 from dynamofuse.records.directory import Directory
 from dynamofuse.records.file import File
 from dynamofuse.records.node import Node
@@ -34,12 +35,12 @@ import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
-from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR, S_ISLNK, S_IFIFO, S_IFBLK, S_IFCHR, S_IFSOCK
+from stat import *
 from boto.dynamodb.types import Binary
 from time import time
 from boto.dynamodb.condition import EQ, GT
 import os
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 from io import FileIO
 import logging
 from logging import StreamHandler, FileHandler
@@ -61,28 +62,28 @@ class BotoExceptionMixin:
     def __call__(self, op, path, *args):
         try:
             ret = getattr(self, op)(path, *args)
-            self.log.debug("<- %s: %s", op, repr(ret))
+            self.log.debug("  <- %s: %s", op, repr(ret))
             if logStream:
                 logStream.flush()
             return ret
         except BotoServerError, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("<- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
         except BotoClientError, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("<- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
         except DynamoDBResponseError, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("<- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
         except FuseOSError, e:
-            self.log.error("<- %s: FuseOSError(%s)", op, e.strerror)
+            self.log.error("  <- %s: FuseOSError(%s)", op, e.strerror)
             raise e
         except BaseException, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("<- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
 
 
@@ -132,13 +133,12 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return 0
 
     def getattr(self, path, fh=None):
-        self.log.debug("getattr(%s)", path)
+        self.log.debug(" getattr(%s)", path)
 
         return self.getRecordOrThrow(path).getattr()
 
     def open(self, path, flags):
         self.log.debug("open(%s, flags=0x%x)", path, flags)
-        # TODO read/write locking? Permission check?
         self.checkFileExists(path)
         return self.allocId()
 
@@ -183,28 +183,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
         item.delete()
 
     def rename(self, old, new):
-        '''
-        oldpath can specify a directory. In this case, newpath must either not exist, or it must specify an empty directory.
-
-However, when overwriting there will probably be a window in which both oldpath and newpath refer to the file being renamed.
-
-If oldpath refers to a symbolic link the link is renamed; if newpath refers to a symbolic link the link will be overwritten.
-
-EINVAL
-The new pathname contained a path prefix of the old, or, more generally, an attempt was made to make a directory a subdirectory of itself.
-
-EISDIR
-newpath is an existing directory, but oldpath is not a directory.
-
-ENOENT
-The link named by oldpath does not exist; or, a directory component in newpath does not exist; or, oldpath or newpath is an empty string.
-
-ENOTDIR
-A component used as a directory in oldpath or newpath is not, in fact, a directory. Or, oldpath is a directory, and newpath exists but is not a directory.
-
-ENOTEMPTY or EEXIST
-newpath is a nonempty directory, that is, contains entries other than "." and "..".
-        '''
         self.log.debug("rename(%s, %s)", old, new)
         if old == new: return
         if old == "/" or new == "/":
@@ -239,6 +217,11 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
 
     def symlink(self, target, source):
         self.log.debug("symlink(%s, %s)", target, source)
+
+#        absSource = self.absPath(source, os.path.dirname(target))
+
+#        self.access(absSource, R_OK)
+        self.access(os.path.dirname(target), R_OK | W_OK)
 
         # getItemOrNone will check path
         item = self.getItemOrNone(target, attrs=[])
@@ -338,9 +321,14 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
     def link(self, target, source):
         self.log.debug("link(%s, %s)", target, source)
 
+        self.checkAccess(source, R_OK)
+
         item = self.getRecordOrThrow(source)
         if not item.isFile() and not item.isNode():
             raise FuseOSError(EINVAL)
+
+        self.checkAccess(os.path.dirname(target), R_OK|W_OK)
+        self.checkAccess(os.path.dirname(source), R_OK|W_OK)
 
         if self.getItemOrNone(target, attrs=[]) is not None:
             raise FuseOSError(EEXIST)
@@ -377,7 +365,17 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
 
         return 0
 
+    def access(self, path, amode):
+        (uid, gid, unused) = fuse_get_context()
+        self.log.debug("access(%s, mode=%d) by (%d, %d)", path, amode, uid, gid)
+        item = self.getRecordOrThrow(path)
+        return item.access(amode)
+
         # ============ PRIVATE ====================
+
+    def checkAccess(self, path, mode):
+        if not self.access(path, mode) == 0:
+            raise FuseOSError(EACCES)
 
     def checkPath(self, path):
         if len(path) > 4096:
@@ -392,6 +390,11 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
             raise FuseOSError(ENAMETOOLONG)
         if len(os.path.dirname(path)) > KEY_MAX:
             raise FuseOSError(ENAMETOOLONG)
+
+    def absPath(self, file, refDir):
+        if file.startsWith('/'):
+            return file
+        return os.path.join(refDir, file)
 
     def fileCount(self):
         self.table.refresh()
@@ -476,12 +479,21 @@ newpath is a nonempty directory, that is, contains entries other than "." and ".
         res = idItem.save(return_values="ALL_NEW")
         return res["Attributes"]["value"]
 
+
+def cleanup(region, tableName):
+    conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
+    table = conn.get_table(tableName)
+    for item in table.scan(attributes_to_get=["name","path"]):
+        if item["path"] == "/" and item["name"] == "/": continue
+        if item["path"] == "global" and item["name"] == "counter": continue
+        item.delete()
+
 if __name__ == '__main__':
     if len(argv) != 4:
         print('usage: %s <region> <dynamo table> <mount point>' % argv[0])
         exit(1)
 
-#    logging.basicConfig(filename='/var/log/dynamo-fuse.log', filemode='w')
     logStream = open('/var/log/dynamo-fuse.log', 'w', 0)
     logging.basicConfig(stream=logStream)
     logging.getLogger("dynamo-fuse").setLevel(logging.DEBUG)
@@ -491,6 +503,10 @@ if __name__ == '__main__':
     logging.getLogger("dynamo-fuse-master").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-block").setLevel(logging.DEBUG)
 
-    fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True)
+    if argv[3] == "cleanup":
+        cleanup(argv[1], argv[2])
+    else:
+        fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=False, auto_cache=False,
+                    noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 
 

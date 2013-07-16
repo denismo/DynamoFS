@@ -27,10 +27,11 @@ from os.path import realpath
 from sys import argv, exit
 from threading import Lock
 import boto.dynamodb
+from posix import R_OK, X_OK, W_OK
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
-from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR, S_ISLNK
+from stat import *
 from boto.dynamodb.types import Binary
 from time import time
 from boto.dynamodb.condition import EQ, GT
@@ -90,7 +91,7 @@ class BaseRecord:
 
         self.delete()
 
-    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId']):
+    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid']):
         attrs=dict(self.record)
         del attrs['name']
         del attrs['path']
@@ -177,6 +178,56 @@ class BaseRecord:
     def access(self, mode):
         if mode == F_OK:
             return 0
+        return -1
+
+    def modeAccess(self, mode, st_mode, st_uid, st_gid):
+        (uid, gid, unused) = fuse_get_context()
+        self.log.debug("modeAccess, node %x %d %d, input %x %d %d", st_mode, st_uid, st_gid, mode, uid, gid)
+        res = False
+        if mode & R_OK:
+            if not (uid == st_uid and st_mode & S_IRUSR or gid == st_gid and st_mode & S_IRGRP or st_mode & S_IROTH):
+                return -1
+
+        if mode & W_OK:
+            if not (uid == st_uid and st_mode & S_IWUSR or gid == st_gid and st_mode & S_IWGRP or st_mode & S_IWOTH):
+                return -1
+
+        if mode & X_OK:
+            if not (uid == st_uid and st_mode & S_IXUSR or gid == st_gid and st_mode & S_IXGRP or st_mode & S_IXOTH):
+                return -1
+
+        '''if mode & R_OK:
+            if uid == st_uid and not st_mode & S_IRUSR:
+                self.log.debug("access - failed user read test")
+                return -1
+            elif gid == st_gid and not st_mode & S_IRGRP:
+                self.log.debug("access - failed group read test")
+                return -1
+            elif not st_mode & S_IROTH:
+                self.log.debug("access - failed other read test")
+                return -1
+        if mode & W_OK:
+            if uid == st_uid and not st_mode & S_IWUSR:
+                self.log.debug("access - failed user write test")
+                return -1
+            elif gid == st_gid and not st_mode & S_IWGRP:
+                self.log.debug("access - failed group write test")
+                return -1
+            elif not st_mode & S_IWOTH:
+                self.log.debug("access - failed other write test")
+                return -1
+        if mode & X_OK:
+            if uid == st_uid and not st_mode & S_IXUSR:
+                self.log.debug("access - failed user exec test")
+                return -1
+            elif gid == st_gid and not st_mode & S_IXGRP:
+                self.log.debug("access - failed group exec test")
+                return -1
+            elif not st_mode & S_IXOTH:
+                self.log.debug("access - failed other exec test")
+                return -1
+                '''
+        return 0
 
     def utimens(self, atime, mtime):
         block = self.record

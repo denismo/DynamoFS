@@ -22,12 +22,13 @@ from threading import Lock
 import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from stat import S_IFDIR, S_IFLNK, S_IFREG
-from time import time
+from datetime import datetime, timedelta
 from boto.dynamodb.condition import EQ, GT
 from boto.dynamodb.types import Binary
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
 import logging
+from collections import deque
 import sys
 import cStringIO
 
@@ -35,6 +36,7 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 blockCache = dict()
+blockHistory = deque()
 blockLog = logging.getLogger("dynamo-fuse-block")
 
 class BlockRecord:
@@ -99,7 +101,12 @@ class BlockRecord:
         if cachedBlockItem and blockItem["version"] < cachedBlockItem["version"] and (getData and "data" in cachedBlockItem or not getData):
             blockLog.debug('Returning cached block item for %s', path)
             return cachedBlockItem
-        return blockItem
+        else:
+            try:
+                del blockCache[path]
+            except:
+                pass
+            return blockItem
 
     @staticmethod
     def getCachedBlockItem(path):
@@ -112,4 +119,19 @@ class BlockRecord:
     def cacheItem(path, item, version):
         blockLog.debug('Caching block for %s', path)
         item["version"] = version
+        item["updateTime"] = datetime.now()
+        item["fullPath"] = path
         blockCache[path] = item
+        blockHistory.append(item)
+        BlockRecord.expellExpiredBlocks()
+
+    @staticmethod
+    def expellExpiredBlocks():
+        now = datetime.now()
+        EXPELL_DELTA = timedelta(seconds=2)
+        while len(blockHistory) > 0 and (now - blockHistory[0]["updateTime"]) > EXPELL_DELTA:
+            block = blockHistory.popleft()
+            try:
+                del blockCache[block["fullPath"]]
+            except:
+                pass

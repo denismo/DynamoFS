@@ -12,9 +12,10 @@ from boto.dynamodb.condition import EQ, GT
 from boto.dynamodb.types import Binary
 import logging
 import cStringIO
-from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR
-from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
+from stat import *
+from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 import itertools
+from posix import R_OK, X_OK, W_OK
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -48,3 +49,12 @@ class Directory(BaseRecord):
 
     def isEmpty(self):
         return len(list(self.accessor.table.query(self.path, attributes_to_get=['name'], consistent_read=True))) == 0
+
+    def access(self, mode):
+        block = self.record
+        st_mode = block['st_mode']
+        st_uid = block['st_uid']
+        st_gid = block['st_gid']
+        if not self.modeAccess(mode, st_mode, st_uid, st_gid): return 0
+
+        return BaseRecord.access(self, mode)

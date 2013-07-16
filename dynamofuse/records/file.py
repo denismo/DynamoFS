@@ -13,10 +13,10 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-from posix import R_OK, X_OK, W_OK
 
 __author__ = 'Denis Mikhalkin'
 
+from posix import R_OK, X_OK, W_OK
 from dynamofuse.records.block import BlockRecord
 from dynamofuse.base import BaseRecord
 from errno import  ENOENT, EINVAL
@@ -29,7 +29,7 @@ from boto.dynamodb.condition import EQ, GT
 from boto.dynamodb.types import Binary
 import logging
 import cStringIO
-from stat import S_IFDIR, S_IFLNK, S_IFREG, S_ISREG, S_ISDIR, S_ISLNK
+from stat import *
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 import itertools
 
@@ -228,8 +228,16 @@ class File(BaseRecord):
         item.save()
 
     def access(self, mode):
-        if BaseRecord.access(self, mode) == -1: return -1
-        st_mode = self.getFirstBlock()['st_mode']
-        if mode & R_OK and not st_mode & S_IREAD: return -1
-        if mode & W_OK and not st_mode & S_IWRITE: return -1
-        if mode & X_OK and not st_mode & S_IEXEC: return -1
+        '''
+The mode specifies the accessibility check(s) to be performed, and is either the value F_OK, or a mask consisting of the bitwise OR of one or more of R_OK, W_OK, and X_OK. F_OK tests for the existence of the file. R_OK, W_OK, and X_OK test whether the file exists and grants read, write, and execute permissions, respectively.
+
+The check is done using the calling process's real UID and GID, rather than the effective IDs as is done when actually attempting an operation (e.g., open(2)) on the file. This allows set-user-ID programs to easily determine the invoking user's authority.
+
+If the calling process is privileged (i.e., its real UID is zero), then an X_OK check is successful for a regular file if execute permission is enabled for any of the file owner, group, or other.
+'''
+        block = self.getFirstBlock()
+        st_mode = block['st_mode']
+        st_uid = block['st_uid']
+        st_gid = block['st_gid']
+        if not self.modeAccess(mode, st_mode, st_uid, st_gid): return 0
+        return BaseRecord.access(self, mode)
