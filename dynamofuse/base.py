@@ -197,20 +197,44 @@ class BaseRecord:
         if not self.modeAccess(mode, st_mode, st_uid, st_gid): return 0
         return -1
 
+    def modeToStr(self, mode):
+        res = ""
+        if mode & S_IRUSR: res += 'r'
+        else: res += '-'
+        if mode & S_IWUSR: res += 'w'
+        else: res += '-'
+        if mode & S_IXUSR: res += 'x'
+        else: res += '-'
+
+        if mode & S_IRGRP: res += 'r'
+        else: res += '-'
+        if mode & S_IWGRP: res += 'w'
+        else: res += '-'
+        if mode & S_IXGRP: res += 'x'
+        else: res += '-'
+
+        if mode & S_IROTH: res += 'r'
+        else: res += '-'
+        if mode & S_IWOTH: res += 'w'
+        else: res += '-'
+        if mode & S_IXOTH: res += 'x'
+        else: res += '-'
+
+        return res
+
     def modeAccess(self, mode, st_mode, st_uid, st_gid):
         (uid, gid, unused) = fuse_get_context()
-        self.log.debug("modeAccess, node %x %d %d, input %x %d %d", st_mode, st_uid, st_gid, mode, uid, gid)
-        res = False
+        self.log.debug("modeAccess, node %x(%s) %d %d, input %x %d %d", st_mode, self.modeToStr(st_mode), st_uid, st_gid, mode, uid, gid)
         if mode & R_OK:
-            if not (uid == st_uid and st_mode & S_IRUSR or gid == st_gid and st_mode & S_IRGRP or st_mode & S_IROTH):
+            if not (uid == st_uid and st_mode & S_IRUSR or uid != st_uid and gid == st_gid and st_mode & S_IRGRP or uid != st_uid and gid != st_gid and st_mode & S_IROTH):
                 return -1
 
         if mode & W_OK:
-            if not (uid == st_uid and st_mode & S_IWUSR or gid == st_gid and st_mode & S_IWGRP or st_mode & S_IWOTH):
+            if not (uid == st_uid and st_mode & S_IWUSR or uid != st_uid and gid == st_gid and st_mode & S_IWGRP or uid != st_uid and gid != st_gid and st_mode & S_IWOTH):
                 return -1
 
         if mode & X_OK:
-            if not (uid == st_uid and st_mode & S_IXUSR or gid == st_gid and st_mode & S_IXGRP or st_mode & S_IXOTH):
+            if not (uid == st_uid and st_mode & S_IXUSR or uid != st_uid and gid == st_gid and st_mode & S_IXGRP or uid != st_uid and gid != st_gid and st_mode & S_IXOTH):
                 return -1
 
         return 0

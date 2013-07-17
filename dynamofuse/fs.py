@@ -132,11 +132,22 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def getattr(self, path, fh=None):
         self.log.debug(" getattr(%s)", path)
 
+        self.checkAccess(os.path.dirname(path), X_OK)
+
         return self.getRecordOrThrow(path).getattr()
 
     def open(self, path, flags):
         self.log.debug("open(%s, flags=0x%x)", path, flags)
+
+        self.checkAccess(os.path.dirname(path), X_OK)
         self.checkFileExists(path)
+
+        access = 0
+        if flags & (os.O_RDONLY | os.O_RDWR) or flags == 0: access |= R_OK
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_APPEND): access |= W_OK
+
+        self.checkAccess(path, access)
+
         return self.allocId()
 
     def utimens(self, path, times=None):
@@ -150,7 +161,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def opendir(self, path):
         self.log.debug("opendir(%s)", path)
+
+        self.checkAccess(os.path.dirname(path), X_OK)
         self.checkFileExists(path)
+        self.checkAccess(path, R_OK|X_OK)
+
         return self.allocId()
 
     def readdir(self, path, fh=None):
@@ -158,12 +173,18 @@ class DynamoFS(BotoExceptionMixin, Operations):
         # Verify the directory exists
         dir = self.getRecordOrThrow(path)
 
+        if dir.access(R_OK|X_OK):
+            raise FuseOSError(EACCES)
+
         yield '.'
         yield '..'
         for v in dir.list(): yield v
 
     def mkdir(self, path, mode):
         self.log.debug("mkdir(%s)", path)
+
+        self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
+
         self.create(path, mode | S_IFDIR)
 
     def rmdir(self, path):
@@ -324,8 +345,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not item.isFile() and not item.isNode():
             raise FuseOSError(EINVAL)
 
-        self.checkAccess(os.path.dirname(target), R_OK|W_OK)
-        self.checkAccess(os.path.dirname(source), R_OK|W_OK)
+        self.checkAccess(os.path.dirname(target), R_OK|W_OK|X_OK)
+        self.checkAccess(os.path.dirname(source), R_OK|X_OK)
 
         if self.getItemOrNone(target, attrs=[]) is not None:
             raise FuseOSError(EEXIST)
@@ -349,6 +370,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def mknod(self, path, mode, dev):
         self.log.debug("mknod(%s, mode=%d, dev=%d)", path, mode, dev)
+
+        self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
 
         item = self.getItemOrNone(path, attrs=[])
         if item is not None:
