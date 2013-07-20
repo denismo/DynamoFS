@@ -21,7 +21,6 @@ from posix import F_OK, R_OK
 
 __author__ = 'Denis Mikhalkin'
 
-from dynamofuse.records import *
 from errno import *
 from os.path import realpath
 from sys import argv, exit
@@ -177,6 +176,12 @@ class BaseRecord:
     def isNode(self):
         return self.record["type"] == "Node"
 
+    def getOwner(self):
+        return self.getRecord()['st_uid']
+
+    def getParent(self, fs):
+        return fs.getRecordOrThrow(os.path.dirname(self.path))
+
     def __getitem__(self, item):
         return self.record[item]
 
@@ -194,8 +199,7 @@ class BaseRecord:
         st_mode = block['st_mode']
         st_uid = block['st_uid']
         st_gid = block['st_gid']
-        if not self.modeAccess(mode, st_mode, st_uid, st_gid): return 0
-        return -1
+        return 0 if self.modeAccess(mode, st_mode, st_uid, st_gid) else -1
 
     def modeToStr(self, mode):
         res = ""
@@ -226,18 +230,18 @@ class BaseRecord:
         (uid, gid, unused) = fuse_get_context()
         self.log.debug("modeAccess, node %x(%s) %d %d, input %x %d %d", st_mode, self.modeToStr(st_mode), st_uid, st_gid, mode, uid, gid)
         if mode & R_OK:
-            if not (uid == st_uid and st_mode & S_IRUSR or uid != st_uid and gid == st_gid and st_mode & S_IRGRP or uid != st_uid and gid != st_gid and st_mode & S_IROTH):
-                return -1
+            if not (not uid or uid == st_uid and st_mode & S_IRUSR or uid != st_uid and gid == st_gid and st_mode & S_IRGRP or uid != st_uid and gid != st_gid and st_mode & S_IROTH):
+                return False
 
         if mode & W_OK:
-            if not (uid == st_uid and st_mode & S_IWUSR or uid != st_uid and gid == st_gid and st_mode & S_IWGRP or uid != st_uid and gid != st_gid and st_mode & S_IWOTH):
-                return -1
+            if not (not uid or uid == st_uid and st_mode & S_IWUSR or uid != st_uid and gid == st_gid and st_mode & S_IWGRP or uid != st_uid and gid != st_gid and st_mode & S_IWOTH):
+                return False
 
         if mode & X_OK:
-            if not (uid == st_uid and st_mode & S_IXUSR or uid != st_uid and gid == st_gid and st_mode & S_IXGRP or uid != st_uid and gid != st_gid and st_mode & S_IXOTH):
-                return -1
+            if not (not uid or uid == st_uid and st_mode & S_IXUSR or uid != st_uid and gid == st_gid and st_mode & S_IXGRP or uid != st_uid and gid != st_gid and st_mode & S_IXOTH):
+                return False
 
-        return 0
+        return True
 
     def utimens(self, atime, mtime):
         block = self.getRecord()
@@ -246,11 +250,10 @@ class BaseRecord:
         block.save()
 
     def permitPrivilegedOnly(self, block, uid, gid):
-        if block['st_uid'] != uid and uid != -1:
-            (ouid, unused, unused) = fuse_get_context()
-            if ouid:
-                self.log.debug('permitPrivilegedOnly: owner is not privileged %d => %d, owner %d', block['st_uid'], uid, ouid)
-                raise FuseOSError(EPERM)
+        (ouid, unused, unused) = fuse_get_context()
+        if ouid and not (uid == -1 or uid == block['st_uid']):
+            self.log.debug('permitPrivilegedOnly: owner is not privileged %d => %d, owner %d', block['st_uid'], uid, ouid)
+            raise FuseOSError(EPERM)
 
     def permitOwnerToGroup(self, block, uid, gid):
         if block['st_gid'] != gid and gid != -1:

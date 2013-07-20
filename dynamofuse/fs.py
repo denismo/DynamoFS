@@ -56,6 +56,7 @@ ALL_ATTRS = None
 NAME_MAX=255 # To match what is expected by Fuse and FSTest
 KEY_MAX=1024
 global logStream
+global GlobalFS
 
 class BotoExceptionMixin:
     log = logging.getLogger("dynamo-fuse")
@@ -105,6 +106,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.table = self.conn.get_table(tableName)
         self.counter = itertools.count()
         self.__createRoot()
+        GlobalFS = self
 
     def init(self, conn):
         self.log.debug("init")
@@ -139,12 +141,14 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def open(self, path, flags):
         self.log.debug("open(%s, flags=0x%x)", path, flags)
 
-        self.checkAccess(os.path.dirname(path), X_OK)
+        access = X_OK
+        if flags & os.O_CREAT: access |= W_OK
+        self.checkAccess(os.path.dirname(path), access)
         self.checkFileExists(path)
 
         access = 0
         if flags & (os.O_RDONLY | os.O_RDWR) or flags == 0: access |= R_OK
-        if flags & (os.O_WRONLY | os.O_RDWR | os.O_APPEND): access |= W_OK
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_TRUNC): access |= W_OK
 
         self.checkAccess(path, access)
 
@@ -195,6 +199,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not item.isDirectory():
             raise FuseOSError(EINVAL)
 
+        self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
+        self.checkSticky(path)
+
         if len(list(item.list())) > 0:
             raise FuseOSError(ENOTEMPTY)
 
@@ -207,6 +214,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(EINVAL)
 
         self.checkPath(new)
+        self.checkAccess(os.path.dirname(old), R_OK|W_OK|X_OK)
+        self.checkAccess(os.path.dirname(new), R_OK|W_OK|X_OK)
+        self.checkSticky(old, new)
 
         item = self.getRecordOrThrow(old)
         newItem = self.getRecordOrNone(new)
@@ -236,10 +246,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def symlink(self, target, source):
         self.log.debug("symlink(%s, %s)", target, source)
 
-#        absSource = self.absPath(source, os.path.dirname(target))
-
-#        self.access(absSource, R_OK)
-        self.access(os.path.dirname(target), R_OK | W_OK)
+        self.checkAccess(os.path.dirname(target), R_OK | W_OK | X_OK)
 
         # getItemOrNone will check path
         item = self.getItemOrNone(target, attrs=[])
@@ -254,10 +261,13 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def create(self, path, mode, fh=None):
         self.log.debug("create(%s, %d)", path, mode)
 
+        self.checkAccess(os.path.dirname(path), R_OK|X_OK|W_OK)
+
         # getItemOrNone will check path
         item = self.getItemOrNone(path, attrs=[])
         if item is not None:
             raise FuseOSError(EEXIST)
+
 
         type = "Node"
         if mode & S_IFDIR == S_IFDIR:
@@ -304,10 +314,18 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not item.isFile():
             raise FuseOSError(EINVAL)
 
+        self.checkAccess(os.path.dirname(path), X_OK)
+
+        if item.access(W_OK):
+            raise FuseOSError(EACCES)
+
         item.truncate(length)
 
     def unlink(self, path):
         self.log.debug("unlink(%s)", path)
+
+        self.checkAccess(os.path.dirname(path), W_OK|X_OK)
+        self.checkSticky(path)
 
         self.getRecordOrThrow(path).delete()
 
@@ -392,6 +410,24 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return item.access(amode)
 
         # ============ PRIVATE ====================
+
+    def checkSticky(self, old, new=None):
+        (uid, gid, unused) = fuse_get_context()
+        oldDir = self.getRecordOrThrow(os.path.dirname(old))
+
+        if oldDir.isSticky():
+            oldItem = self.getRecordOrThrow(old)
+            if uid != 0 and not (uid == oldDir.getOwner() or uid == oldItem.getOwner()):
+                raise FuseOSError(EPERM)
+
+        if new:
+            newItem = self.getRecordOrNone(new)
+            if newItem:
+                parent = newItem.getParent(self)
+                if parent.isSticky():
+                    if uid:
+                        if not (newItem.getOwner() == uid or parent.getOwner() == uid):
+                            raise FuseOSError(EPERM)
 
     def checkAccess(self, path, mode):
         if not self.access(path, mode) == 0:

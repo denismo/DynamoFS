@@ -15,7 +15,7 @@ import cStringIO
 from stat import *
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 import itertools
-from posix import R_OK, X_OK, W_OK
+from posix import *
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -49,3 +49,6 @@ class Directory(BaseRecord):
 
     def isEmpty(self):
         return len(list(self.accessor.table.query(self.path, attributes_to_get=['name'], consistent_read=True))) == 0
+
+    def isSticky(self):
+        return self.record['st_mode'] & S_ISVTX
