@@ -50,22 +50,24 @@ class File(BaseRecord):
 
 #        createBlock = False
 #        if not "blockId" in attrs:
-#            attrs["blockId"] = str(self.accessor.allocUniqueId())
+        attrs["blockId"] = str(self.accessor.allocUniqueId())
+        attrs["st_ino"] = int(attrs["blockId"])
 #            createBlock = True
 #
-#        BaseRecord.create(self, accessor, path, attrs)
+        BaseRecord.create(self, accessor, path, attrs)
 #
 #        if createBlock:
 #            self.createFirstBlock(attrs['st_mode'])
 
     def getFirstBlock(self, getData=False):
-        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
+#        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
+        return self.record
 
     def getBlock(self, blockNum, getData=False):
         return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).read(getData)
 
     def createBlock(self, blockNum):
-        assert blockNum != 0, "First block is a special block"
+#        assert blockNum != 0, "First block is a special block"
         return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).create(attrs={
             "path": self.record["blockId"], "name": str(blockNum)
         })
@@ -93,7 +95,10 @@ class File(BaseRecord):
         block.save()
 
     def getRecord(self):
-        return self.getFirstBlock()
+        return self.record
+
+    def isDeleted(self):
+        return 'deleted' in self.record and self.record['deleted']
 
     ################# OPERATIONS ##########################
 
@@ -101,22 +106,28 @@ class File(BaseRecord):
         block = self.getFirstBlock()
         block["st_blocks"] = (block["st_size"] + self.record["st_blksize"] - 1) / self.record["st_blksize"]
         block["st_ino"] = int(self.record["blockId"])
-        return block.item
+        return block
+
+    def link(self):
+        block = self.getFirstBlock()
+        block["st_nlink"] += 1
+        block['st_ctime'] = int(time())
+        block.save()
 
     def delete(self):
         block = self.getFirstBlock()
         block["st_nlink"] -= 1
         block['st_ctime'] = int(time())
+        block['deleted'] = True
         if not block["st_nlink"]:
-            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'],
-                consistent_read=True)
+            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
             # TODO Pagination
             for entry in items:
                 entry.delete()
+
+            BaseRecord.delete(self)
         else:
             block.save()
-
-        BaseRecord.delete(self)
 
     def write(self, data, offset):
         self._write(data, offset)
@@ -174,20 +185,19 @@ class File(BaseRecord):
 
     def cloneItem(self, path, unused=None):
         # Our record does not contain st_mode - only first block does
-        self.record['st_mode'] = self.getFirstBlock()['st_mode']
         BaseRecord.cloneItem(self, path)
 
-        newBlock = self.getFirstBlock()
-        newBlock["st_ctime"] = int(time())
-        newBlock["st_nlink"] += 1
-        newBlock.save()
+#        newBlock = self.getFirstBlock()
+#        newBlock["st_ctime"] = int(time())
+#        newBlock["st_nlink"] += 1
+#        newBlock.save()
 
     def truncate(self, length, fh=None):
         lastBlock = length / self.accessor.BLOCK_SIZE
         l_time = int(time())
 
         items = self.accessor.table.query(hash_key=self.path, range_key_condition=GT(str(lastBlock)),
-            attributes_to_get=['name', "path"], consistent_read=True)
+            attributes_to_get=['name', "path"])
         # TODO Pagination
         for entry in items:
             entry.delete()
@@ -205,7 +215,7 @@ class File(BaseRecord):
                 else:
                     raise fe
 
-        item = self.getFirstBlock(getData=False)
+        item = self.getFirstBlock()
         item['st_size'] = length
         item['st_ctime'] = l_time
         item['st_mtime'] = l_time

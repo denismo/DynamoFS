@@ -19,7 +19,6 @@ import itertools
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-# TODO Can we do chmod/chown on symlink?
 class Symlink(BaseRecord):
 
     def getattr(self):

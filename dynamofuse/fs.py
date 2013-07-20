@@ -17,7 +17,6 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
-from dynamofuse.base import BaseRecord
 
 __author__ = 'Denis Mikhalkin'
 
@@ -27,6 +26,8 @@ from dynamofuse.records.directory import Directory
 from dynamofuse.records.file import File
 from dynamofuse.records.node import Node
 from dynamofuse.records.symlink import Symlink
+from dynamofuse.base import BaseRecord
+from dynamofuse.records.link import Link
 from errno import *
 from os.path import realpath
 from sys import argv, exit
@@ -56,7 +57,6 @@ ALL_ATTRS = None
 NAME_MAX=255 # To match what is expected by Fuse and FSTest
 KEY_MAX=1024
 global logStream
-global GlobalFS
 
 class BotoExceptionMixin:
     log = logging.getLogger("dynamo-fuse")
@@ -95,7 +95,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         "File": File,
         "Directory": Directory,
         "Symlink": Symlink,
-        "Node": Node
+        "Node": Node,
+        "Link": Link
     }
 
     def __init__(self, region, tableName):
@@ -106,7 +107,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.table = self.conn.get_table(tableName)
         self.counter = itertools.count()
         self.__createRoot()
-        GlobalFS = self
 
     def init(self, conn):
         self.log.debug("init")
@@ -369,7 +369,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if self.getItemOrNone(target, attrs=[]) is not None:
             raise FuseOSError(EEXIST)
 
-        item.cloneItem(target)
+        Link().createRecord(self, target, {}, item)
 
         sourceDir = self.getRecordOrThrow(os.path.dirname(source))
         sourceDir.updateCTime()
@@ -491,7 +491,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         except DynamoDBKeyNotFoundError:
             return None
 
-    def getRecordOrThrow(self, filepath, attrs=None):
+    def getRecordOrThrow(self, filepath, attrs=None, ignoreDeleted=False):
         self.checkPath(filepath)
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
@@ -501,11 +501,14 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.initRecord(filepath, self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True))
+            res = self.initRecord(filepath, self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True))
+            if not ignoreDeleted and res.isDeleted():
+                raise FuseOSError(ENOENT)
+            return res
         except DynamoDBKeyNotFoundError:
             raise FuseOSError(ENOENT)
 
-    def getRecordOrNone(self, path, attrs=None):
+    def getRecordOrNone(self, path, attrs=None, ignoreDeleted=False):
         self.checkPath(path)
         if attrs is not None:
             if not "name" in attrs: attrs.append("name")
@@ -515,7 +518,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.initRecord(path, self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True))
+            res = self.initRecord(path, self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True))
+            if not ignoreDeleted and res.isDeleted():
+                raise FuseOSError(ENOENT)
+            return res
         except DynamoDBKeyNotFoundError:
             return None
 

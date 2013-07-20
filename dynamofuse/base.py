@@ -67,6 +67,7 @@ class BaseRecord:
                     'st_size': 0, 'st_ctime': l_time,
                     'st_mtime': l_time, 'st_atime': l_time,
                     'st_gid': gid, 'st_uid': uid,
+                    'version': 1,
                     'st_ino': attrs['st_ino'] if 'st_ino' in attrs else self.accessor.allocUniqueId()
         }
         for k, v in attrs.items():
@@ -93,7 +94,7 @@ class BaseRecord:
 
         self.delete()
 
-    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid']):
+    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid', 'deleted']):
         attrs=dict(self.record)
         del attrs['name']
         del attrs['path']
@@ -111,7 +112,7 @@ class BaseRecord:
         return newItem
 
     def getattr(self):
-        return self.record
+        return self.getRecord()
 
     def chmod(self, mode):
         block = self.getRecord()
@@ -271,3 +272,6 @@ class BaseRecord:
         (ouid, ogid, unused) = fuse_get_context()
         if ouid and ogid != block['st_gid']:
             block['st_mode'] &= ~S_ISGID
+
+    def isDeleted(self):
+        return False

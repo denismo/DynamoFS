@@ -28,10 +28,10 @@ class Directory(BaseRecord):
         return self.record
 
     def list(self):
-        items = self.accessor.table.query(self.path, attributes_to_get=['name'], consistent_read=True)
+        items = self.accessor.table.query(self.path, attributes_to_get=['name', 'deleted'])
 
         for entry in items:
-            if entry['name'] == "/":
+            if entry['name'] == "/" or ("deleted" in entry and entry['deleted']):
                 continue # This could be the folder itself
             yield entry['name']
 
@@ -48,7 +48,7 @@ class Directory(BaseRecord):
             self.accessor.rename(os.path.join(self.path, entry), os.path.join(new, entry))
 
     def isEmpty(self):
-        return len(list(self.accessor.table.query(self.path, attributes_to_get=['name'], consistent_read=True))) == 0
+        return len(list(filter(self.accessor.table.query(self.path, attributes_to_get=['name', 'deleted']), lambda entry: entry['name'] != "/" and not ("deleted" in entry and entry['deleted'])))) == 0
 
     def isSticky(self):
         return self.record['st_mode'] & S_ISVTX
