@@ -48,15 +48,15 @@ class File(BaseRecord):
         if not 'st_blksize' in attrs:
             attrs['st_blksize'] = accessor.BLOCK_SIZE
 
-        createBlock = False
-        if not "blockId" in attrs:
-            attrs["blockId"] = str(self.accessor.allocUniqueId())
-            createBlock = True
-
-        BaseRecord.create(self, accessor, path, attrs)
-
-        if createBlock:
-            self.createFirstBlock(attrs['st_mode'])
+#        createBlock = False
+#        if not "blockId" in attrs:
+#            attrs["blockId"] = str(self.accessor.allocUniqueId())
+#            createBlock = True
+#
+#        BaseRecord.create(self, accessor, path, attrs)
+#
+#        if createBlock:
+#            self.createFirstBlock(attrs['st_mode'])
 
     def getFirstBlock(self, getData=False):
         return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
