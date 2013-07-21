@@ -36,7 +36,7 @@ import itertools
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-# TODO File operations - read, write, open
+# TODO Rename handling
 class Link(BaseRecord):
 
     def createRecord(self, accessor, path, attrs, link):

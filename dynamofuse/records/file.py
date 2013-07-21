@@ -48,16 +48,11 @@ class File(BaseRecord):
         if not 'st_blksize' in attrs:
             attrs['st_blksize'] = accessor.BLOCK_SIZE
 
-#        createBlock = False
-#        if not "blockId" in attrs:
-        attrs["blockId"] = str(self.accessor.allocUniqueId())
-        attrs["st_ino"] = int(attrs["blockId"])
-#            createBlock = True
-#
+        if not "blockId" in attrs:
+            attrs["blockId"] = str(self.accessor.allocUniqueId())
+            attrs["st_ino"] = int(attrs["blockId"])
+
         BaseRecord.create(self, accessor, path, attrs)
-#
-#        if createBlock:
-#            self.createFirstBlock(attrs['st_mode'])
 
     def getFirstBlock(self, getData=False):
 #        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
@@ -119,10 +114,12 @@ class File(BaseRecord):
 
     def deleteFile(self, linked=False):
         block = self.getFirstBlock()
+        self.log.debug("Delete file, linked=%s, links=%d", linked, block["st_nlink"])
         block["st_nlink"] -= 1
         block['st_ctime'] = int(time())
         block['deleted'] = not linked
         if not block["st_nlink"]:
+            self.log.debug("No more links - deleting records")
             items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
             # TODO Pagination
             for entry in items:
@@ -192,14 +189,22 @@ class File(BaseRecord):
         finally:
             data.close()
 
-    def cloneItem(self, path, unused=None):
-        # Our record does not contain st_mode - only first block does
-        BaseRecord.cloneItem(self, path)
 
-#        newBlock = self.getFirstBlock()
-#        newBlock["st_ctime"] = int(time())
-#        newBlock["st_nlink"] += 1
-#        newBlock.save()
+    def moveTo(self, newPath):
+        # Files can be hard-linked. When moved, they will update the targets of their hard-links to point to new name (as hard links are actually by name)
+        self.cloneItem(newPath)
+
+        # TODO: A problem - in order to perform this query we have to run it against hash_key + "link" which is impossible with current design
+        if self.record["st_nlink"] > 1:
+            self.log.debug("Retargeting links from %s to %s" % (self.path, newPath))
+            items = self.accessor.table.scan({"link":EQ(self.path)})
+            for link in items:
+                link["link"] = newPath
+                link.save()
+
+            self.record["st_nlink"] = 1
+
+        self.record.delete()
 
     def truncate(self, length, fh=None):
         lastBlock = length / self.accessor.BLOCK_SIZE

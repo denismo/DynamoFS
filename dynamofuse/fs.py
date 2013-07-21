@@ -36,6 +36,7 @@ import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
 from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
+from boto.dynamodb2.table import Table
 from stat import *
 from boto.dynamodb.types import Binary
 from time import time
@@ -49,6 +50,10 @@ import sys
 import cStringIO
 import itertools
 import traceback
+from boto.dynamodb2.fields import HashKey, RangeKey, KeysOnlyIndex, AllIndex, IncludeIndex
+from boto.dynamodb2.layer1 import DynamoDBConnection
+from boto.dynamodb2.table import Table
+from boto.dynamodb2.types import NUMBER, STRING
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -102,11 +107,44 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def __init__(self, region, tableName):
         self.log = logging.getLogger("dynamo-fuse")
         self.tableName = tableName
+        self.region = region
+        for reg in boto.dynamodb2.regions():
+            if reg.name == region:
+                self.regionv2 = reg
+                break
         self.conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
             aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
-        self.table = self.conn.get_table(tableName)
+        try:
+            self.table = self.conn.get_table(tableName)
+            self.tablev2 = Table(tableName)
+        except:
+            self.createTable()
         self.counter = itertools.count()
         self.__createRoot()
+
+    def createTable(self):
+        connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'], region=self.regionv2)
+        self.tablev2 = Table.create(self.tableName, schema=[
+            HashKey('path'),
+            RangeKey('name')
+        ], throughput={'read': 30, 'write': 10},
+        indexes=[
+            KeysOnlyIndex("Links", parts=[
+                HashKey('path'),
+                RangeKey('link')
+            ])
+        ],
+            connection=connection
+        )
+
+        description = connection.describe_table(self.tableName)
+        iter = 0
+        while description["Table"]["TableStatus"] != "ACTIVE":
+            print "Waiting for %s to create %d..." % (self.tableName, iter)
+            iter += 1
+            description = connection.describe_table(self.tableName)
+        self.table = self.conn.get_table(self.tableName)
 
     def init(self, conn):
         self.log.debug("init")
@@ -187,7 +225,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def mkdir(self, path, mode):
         self.log.debug("mkdir(%s)", path)
 
-        self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
+        if path != "/":
+            self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
 
         self.create(path, mode | S_IFDIR)
 
@@ -261,13 +300,13 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def create(self, path, mode, fh=None):
         self.log.debug("create(%s, %d)", path, mode)
 
-        self.checkAccess(os.path.dirname(path), R_OK|X_OK|W_OK)
+        if path != "/":
+            self.checkAccess(os.path.dirname(path), R_OK|X_OK|W_OK)
 
         # getItemOrNone will check path
         item = self.getItemOrNone(path, attrs=[])
         if item is not None:
             raise FuseOSError(EEXIST)
-
 
         type = "Node"
         if mode & S_IFDIR == S_IFDIR:
@@ -560,6 +599,8 @@ if __name__ == '__main__':
 
     if argv[3] == "cleanup":
         cleanup(argv[1], argv[2])
+    elif argv[3] == "createTable":
+        DynamoFS(argv[1], argv[2]).createTable()
     else:
         fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=False, auto_cache=False,
                     noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)

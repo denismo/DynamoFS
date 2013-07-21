@@ -72,6 +72,7 @@ class BaseRecord:
         }
         for k, v in attrs.items():
             newAttrs[k] = v
+        self.log.debug("Create attrs: %s", newAttrs)
         item = self.accessor.table.new_item(attrs=newAttrs)
         item.put()
         self.record = item
@@ -94,7 +95,7 @@ class BaseRecord:
 
         self.delete()
 
-    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid', 'deleted']):
+    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid', 'deleted', 'blockId']):
         attrs=dict(self.record)
         del attrs['name']
         del attrs['path']
@@ -106,6 +107,7 @@ class BaseRecord:
             for attr in toDelete:
                 del attrs[attr]
         newItem = self.__class__()
+        self.log.debug("Clone item attrs:%s", attrs)
         newItem.create(self.accessor, path, attrs)
 
         self.updateDirectoryMTime(path)
