@@ -61,5 +61,11 @@ class Link(BaseRecord):
         self.link.link()
 
     def delete(self):
-        self.link.delete()
+        self.link.deleteFile(True)
         BaseRecord.delete(self)
+
+    def read(self, offset, size):
+        return self.link.read(offset, size)
+
+    def write(self, data, offset):
+        return self.link.write(data, offset)

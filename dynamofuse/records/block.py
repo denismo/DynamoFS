@@ -52,8 +52,8 @@ class BlockRecord:
         self.accessor = accessor
         self.path = path
 
-    def read(self, getData=False):
-        self.item = BlockRecord.getBlockItem(self.accessor, self.path, getData)
+    def read(self, getData=False, forUpdate=False):
+        self.item = BlockRecord.getBlockItem(self.accessor, self.path, getData, forUpdate)
         return self
 
     def create(self, attrs):
@@ -75,6 +75,9 @@ class BlockRecord:
 
     def save(self):
         self.item.add_attribute("version", 1)
+        # Delete this properties before they are saved into DynamoDB. They will be restored next time the item is cached
+        if "updateTime" in self.item: del self.item["updateTime"]
+        if "fullPath" in self.item: del self.item["fullPath"]
         self.item.save()
         BlockRecord.cacheItem(self.path, self.item, self.item["version"] + 1)
 
@@ -88,9 +91,9 @@ class BlockRecord:
             self.item['data'] = Binary(dataSlice)
 
     @staticmethod
-    def getBlockItem(accessor, path, getData=False):
+    def getBlockItem(accessor, path, getData=False, forUpdate=False):
         blockItem = accessor.getItemOrNone(path, attrs=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
-        cachedBlockItem = BlockRecord.getCachedBlockItem(path)
+        cachedBlockItem = BlockRecord.getCachedBlockItem(path, forUpdate)
         if not blockItem:
             if cachedBlockItem and (getData and "data" in cachedBlockItem or not getData):
                 blockLog.debug('Returning cached block item for %s', path)
@@ -106,14 +109,25 @@ class BlockRecord:
                 del blockCache[path]
             except:
                 pass
+            try:
+                blockHistory.remove(blockItem)
+            except:
+                pass
             return blockItem
 
     @staticmethod
-    def getCachedBlockItem(path):
-        try:
-            return blockCache[path]
-        except:
-            return None
+    def getCachedBlockItem(path, forUpdate=False):
+        if forUpdate:
+            item = blockCache.pop(path, None)
+            # Need to remove the item because the next update will put it in at different offset
+            if item:
+                try:
+                    blockHistory.remove(item)
+                except:
+                    pass
+            return item
+        else:
+            return blockCache.get(path, None)
 
     @staticmethod
     def cacheItem(path, item, version):

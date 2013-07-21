@@ -174,6 +174,9 @@ class BaseRecord:
     def isLink(self):
         return self.record["type"] == "Symlink"
 
+    def isHardLink(self):
+        return self.record["type"] == "Link"
+
     def isNode(self):
         return self.record["type"] == "Node"
 

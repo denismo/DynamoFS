@@ -329,18 +329,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         self.getRecordOrThrow(path).delete()
 
-    # TODO Should we instead implement MVCC?
-    # TODO Or should we put big blocks onto S3
-    # TODO Can we put the first block into the file item?
-    # TODO Update modification time
     def write(self, path, data, offset, fh):
         self.log.debug("write(%s, len=%d, offset=%d)", path, len(data), offset)
 
-        # TODO Cache opened item based on file handle
-        # TODO What if item has changed underneath?
-
         item = self.getRecordOrThrow(path)
-        if not item.isFile():
+        if not item.isFile() and not item.isHardLink():
             raise FuseOSError(EINVAL)
 
         return item.write(data, offset)
@@ -349,7 +342,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("read(%s, size=%d, offset=%d)", path, size, offset)
 
         item = self.getRecordOrThrow(path)
-        if not item.isFile():
+        if not item.isFile() and not item.isHardLink():
             raise FuseOSError(EINVAL)
 
         return item.read(offset, size)

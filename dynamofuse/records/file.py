@@ -63,8 +63,8 @@ class File(BaseRecord):
 #        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
         return self.record
 
-    def getBlock(self, blockNum, getData=False):
-        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).read(getData)
+    def getBlock(self, blockNum, getData=False, forUpdate=False):
+        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).read(getData, forUpdate)
 
     def createBlock(self, blockNum):
 #        assert blockNum != 0, "First block is a special block"
@@ -115,10 +115,13 @@ class File(BaseRecord):
         block.save()
 
     def delete(self):
+        self.deleteFile()
+
+    def deleteFile(self, linked=False):
         block = self.getFirstBlock()
         block["st_nlink"] -= 1
         block['st_ctime'] = int(time())
-        block['deleted'] = True
+        block['deleted'] = not linked
         if not block["st_nlink"]:
             items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
             # TODO Pagination
@@ -144,10 +147,14 @@ class File(BaseRecord):
         blockOffset = 0
         self.log.debug("write start=%d, last=%d, initial offset %d", startBlock, endBlock, initialBlockOffset)
         for blockNum in range(startBlock, endBlock + 1):
-            block = self.getBlock(blockNum, getData=True)
-            if block is None:
-                self.log.debug("write block %d is None", blockNum)
-                block = self.createBlock(blockNum)
+            try:
+                block = self.getBlock(blockNum, getData=True)
+            except FuseOSError, fe:
+                if fe.errno == ENOENT:
+                    self.log.debug("write block %d is None", blockNum)
+                    block = self.createBlock(blockNum)
+                else:
+                    raise
             dataSlice = data[0:initialBlockOffset] if blockNum == startBlock else\
             data[blockOffset: blockOffset + self.accessor.BLOCK_SIZE]
 
@@ -159,11 +166,13 @@ class File(BaseRecord):
 
     def read(self, offset, size):
         startBlock = offset / self.accessor.BLOCK_SIZE
+        if offset+size > self.record["st_size"]:
+            size = self.record["st_size"] - offset
         endBlock = (offset + size - 1) / self.accessor.BLOCK_SIZE
         data = cStringIO.StringIO()
         try:
             self.log.debug("read blocks [%d .. %d]", startBlock, endBlock)
-            for block in range(startBlock, endBlock + 1):
+            for block in range(startBlock, endBlock+1):
                 item = self.getBlock(block, getData=True)
                 if item is None:
                     self.log.debug("read block %d does not exist", block)
@@ -174,7 +183,7 @@ class File(BaseRecord):
                 itemData = item["data"].value
                 writeLen = min(size, self.accessor.BLOCK_SIZE, len(itemData))
                 startOffset = (offset % self.accessor.BLOCK_SIZE) if block == startBlock else 0
-                self.log.debug("read block %d has %d data, writing %d from %d", block, len(itemData), writeLen,
+                self.log.debug("read block %d has %d data, write %d from %d", block, len(itemData), writeLen,
                     startOffset)
                 data.write(itemData[startOffset:startOffset + writeLen])
                 size -= writeLen
@@ -197,7 +206,7 @@ class File(BaseRecord):
         l_time = int(time())
 
         items = self.accessor.table.query(hash_key=self.path, range_key_condition=GT(str(lastBlock)),
-            attributes_to_get=['name', "path"])
+            attributes_to_get=["name", "path"])
         # TODO Pagination
         for entry in items:
             entry.delete()
