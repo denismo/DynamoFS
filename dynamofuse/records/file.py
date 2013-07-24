@@ -189,7 +189,6 @@ class File(BaseRecord):
         finally:
             data.close()
 
-
     def moveTo(self, newPath):
         # Files can be hard-linked. When moved, they will update the targets of their hard-links to point to new name (as hard links are actually by name)
         self.cloneItem(newPath)

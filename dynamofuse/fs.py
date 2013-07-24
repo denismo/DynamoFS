@@ -33,7 +33,7 @@ from os.path import realpath
 from sys import argv, exit
 from threading import Lock
 import boto.dynamodb
-from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
+from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError, DynamoDBConditionalCheckFailedError
 from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
 from boto.dynamodb2.table import Table
@@ -121,6 +121,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             self.createTable()
         self.counter = itertools.count()
         self.__createRoot()
+        print "Ready"
 
     def createTable(self):
         connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
@@ -143,6 +144,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         while description["Table"]["TableStatus"] != "ACTIVE":
             print "Waiting for %s to create %d..." % (self.tableName, iter)
             iter += 1
+            time.sleep(1)
             description = connection.describe_table(self.tableName)
         self.table = self.conn.get_table(self.tableName)
 
@@ -526,9 +528,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def getRecordOrThrow(self, filepath, attrs=None, ignoreDeleted=False):
         self.checkPath(filepath)
         if attrs is not None:
-            if not "name" in attrs: attrs.append("name")
-            if not "path" in attrs: attrs.append("path")
-            if not "type" in attrs: attrs.append("type")
+            for i in ["name", "path", "type", "version"]:
+                if not i in attrs: attrs.append(i)
         name = os.path.basename(filepath)
         if name == "":
             name = "/"
@@ -543,9 +544,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def getRecordOrNone(self, path, attrs=None, ignoreDeleted=False):
         self.checkPath(path)
         if attrs is not None:
-            if not "name" in attrs: attrs.append("name")
-            if not "path" in attrs: attrs.append("path")
-            if not "type" in attrs: attrs.append("type")
+            for i in ["name", "path", "type", "version"]:
+                if not i in attrs: attrs.append(i)
         name = os.path.basename(path)
         if name == "":
             name = "/"
@@ -572,7 +572,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
         idItem.add_attribute("value", 1)
         res = idItem.save(return_values="ALL_NEW")
         return res["Attributes"]["value"]
-
 
 def cleanup(region, tableName):
     conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],

@@ -17,7 +17,6 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
-from posix import F_OK, R_OK
 
 __author__ = 'Denis Mikhalkin'
 
@@ -26,8 +25,9 @@ from os.path import realpath
 from sys import argv, exit
 from threading import Lock
 import boto.dynamodb
+from posix import F_OK, R_OK
 from posix import R_OK, X_OK, W_OK
-from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
+from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError, DynamoDBConditionalCheckFailedError
 from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
 from stat import *
@@ -44,6 +44,22 @@ import traceback
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
+
+MAX_RETRIES = 5
+
+def retry(m):
+    def wrappedM(*args):
+        retries = 0
+        while retries < MAX_RETRIES:
+            try:
+                return m(*args)
+            except DynamoDBConditionalCheckFailedError, cf:
+                logging.getLogger("dynamo-fuse").debug(cf)
+                logging.getLogger("dynamo-fuse").debug("Retrying " + str(m))
+                retries += 1
+                if retries >= MAX_RETRIES:
+                    raise FuseOSError(EIO)
+    return wrappedM
 
 # Note: st_mode, st_gid and st_uid are at inode level
 class BaseRecord:
@@ -81,6 +97,16 @@ class BaseRecord:
         self.accessor = accessor
         self.path = path
         self.record = record
+        logging.getLogger("dynamo-fuse").debug("Read record %s%s, version %d", record["path"], record["name"], record["version"])
+        self.record.save = self.safeSave(self.record, self.record.save)
+
+    @staticmethod
+    def safeSave(record, origSave):
+        def safeSaveImpl():
+            logging.getLogger("dynamo-fuse").debug("Saving record %s%s, version %d", record["path"], record["name"], record["version"])
+            record.add_attribute("version", 1)
+            origSave(expected_value={"version": record["version"]})
+        return safeSaveImpl
 
     def getRecord(self):
         return self.record
@@ -116,6 +142,7 @@ class BaseRecord:
     def getattr(self):
         return self.getRecord()
 
+    @retry
     def chmod(self, mode):
         block = self.getRecord()
 
@@ -127,6 +154,7 @@ class BaseRecord:
         block['st_ctime'] = int(time())
         block.save()
 
+    @retry
     def chown(self, uid, gid):
         block = self.getRecord()
 
@@ -249,6 +277,7 @@ class BaseRecord:
 
         return True
 
+    @retry
     def utimens(self, atime, mtime):
         block = self.getRecord()
         block['st_atime'] = atime
