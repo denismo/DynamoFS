@@ -50,12 +50,13 @@ MAX_RETRIES = 5
 def retry(m):
     def wrappedM(*args):
         retries = 0
+        logger = logging.getLogger("dynamo-fuse")
         while retries < MAX_RETRIES:
             try:
                 return m(*args)
             except DynamoDBConditionalCheckFailedError, cf:
-                logging.getLogger("dynamo-fuse").debug(cf)
-                logging.getLogger("dynamo-fuse").debug("Retrying " + str(m))
+                logger.debug(cf)
+                logger.debug("Retrying " + str(m))
                 retries += 1
                 if retries >= MAX_RETRIES:
                     raise FuseOSError(EIO)
@@ -92,6 +93,8 @@ class BaseRecord:
         item = self.accessor.table.new_item(attrs=newAttrs)
         item.put()
         self.record = item
+        logging.getLogger("dynamo-fuse").debug("Read record %s%s, version %d", self.record["path"], self.record["name"], self.record["version"])
+        self.record.save = self.safeSave(self.record, self.record.save)
 
     def init(self, accessor, path, record):
         self.accessor = accessor
@@ -167,26 +170,28 @@ class BaseRecord:
         block.save()
 
     def updateCTime(self):
-        self.record['st_ctime'] = int(time())
+        self.record['st_ctime'] = max(self.record['st_ctime'], int(time()))
         # TODO Concurrency
         self.record.save()
 
     def updateMTime(self):
-        self.record['st_mtime'] = int(time())
+        self.record['st_mtime'] = max(self.record['st_mtime'], int(time()))
         # TODO Concurrency
         self.record.save()
 
     def updateMCTime(self):
         l_time = int(time())
-        self.record['st_mtime'] = l_time
-        self.record['st_ctime'] = l_time
+        self.record['st_mtime'] = max(self.record['st_mtime'], l_time)
+        self.record['st_ctime'] = max(self.record['st_mtime'], l_time)
         # TODO Concurrency
         self.record.save()
 
+    @retry
     def updateDirectoryMTime(self, filepath):
         dir = self.accessor.getRecordOrThrow(os.path.dirname(filepath))
         dir.updateMTime()
 
+    @retry
     def updateDirectoryMCTime(self, filepath):
         dir = self.accessor.getRecordOrThrow(os.path.dirname(filepath))
         dir.updateMCTime()
