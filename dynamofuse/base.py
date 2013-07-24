@@ -154,7 +154,7 @@ class BaseRecord:
         block['st_mode'] &= 0770000
         block['st_mode'] |= mode
         self.checkSetGid(block)
-        block['st_ctime'] = int(time())
+        block['st_ctime'] = max(int(time()), block['st_ctime'])
         block.save()
 
     @retry
@@ -166,7 +166,7 @@ class BaseRecord:
 
         if uid != -1: block['st_uid'] = uid
         if gid != -1: block['st_gid'] = gid
-        block['st_ctime'] = int(time())
+        block['st_ctime'] = max(int(time()), block['st_ctime'])
         block.save()
 
     def updateCTime(self):
@@ -285,8 +285,8 @@ class BaseRecord:
     @retry
     def utimens(self, atime, mtime):
         block = self.getRecord()
-        block['st_atime'] = atime
-        block['st_mtime'] = mtime
+        block['st_atime'] = max(int(atime), block['st_atime'])
+        block['st_mtime'] = max(int(mtime), block['st_mtime'])
         block.save()
 
     def permitPrivilegedOnly(self, block, uid, gid):

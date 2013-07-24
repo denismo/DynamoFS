@@ -86,7 +86,7 @@ class File(BaseRecord):
 
     def updateCTime(self):
         block = self.getFirstBlock()
-        block['st_ctime'] = int(time())
+        block['st_ctime'] = max(block['st_ctime'], int(time()))
         block.save()
 
     def getRecord(self):
@@ -105,8 +105,8 @@ class File(BaseRecord):
 
     def link(self):
         block = self.getFirstBlock()
-        block["st_nlink"] += 1
-        block['st_ctime'] = int(time())
+        block.add_attribute("st_nlink", 1)
+        block['st_ctime'] = max(block['st_ctime'], int(time()))
         block.save()
 
     def delete(self):
@@ -115,8 +115,8 @@ class File(BaseRecord):
     def deleteFile(self, linked=False):
         block = self.getFirstBlock()
         self.log.debug("Delete file, linked=%s, links=%d", linked, block["st_nlink"])
-        block["st_nlink"] -= 1
-        block['st_ctime'] = int(time())
+        block.add_attribute("st_nlink", -1)
+        block['st_ctime'] = max(block['st_ctime'], int(time()))
         block['deleted'] = not linked
         if not block["st_nlink"]:
             self.log.debug("No more links - deleting records")
@@ -201,6 +201,7 @@ class File(BaseRecord):
                 link["link"] = newPath
                 link.save()
 
+            # This will force delete the block
             self.record["st_nlink"] = 1
 
         self.record.delete()
@@ -230,6 +231,6 @@ class File(BaseRecord):
 
         item = self.getFirstBlock()
         item['st_size'] = length
-        item['st_ctime'] = l_time
-        item['st_mtime'] = l_time
+        item['st_ctime'] = max(l_time, item['st_ctime'])
+        item['st_mtime'] = max(l_time, item['st_mtime'])
         item.save()
