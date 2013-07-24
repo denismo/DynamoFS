@@ -39,7 +39,7 @@ from boto.exception import DynamoDBResponseError
 from boto.dynamodb2.table import Table
 from stat import *
 from boto.dynamodb.types import Binary
-from time import time
+from time import time, sleep
 from boto.dynamodb.condition import EQ, GT
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
@@ -114,9 +114,12 @@ class DynamoFS(BotoExceptionMixin, Operations):
                 break
         self.conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
             aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
+        connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'], region=self.regionv2)
         try:
             self.table = self.conn.get_table(tableName)
-            self.tablev2 = Table(tableName)
+            self.tablev2 = Table(tableName, connection=connection)
+            self.blockTable = Table(self.tableName+"Blocks", connection=connection)
         except:
             self.createTable()
         self.counter = itertools.count()
@@ -126,16 +129,26 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def createTable(self):
         connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
             aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'], region=self.regionv2)
-        self.tablev2 = Table.create(self.tableName, schema=[
-            HashKey('path'),
-            RangeKey('name')
-        ], throughput={'read': 30, 'write': 10},
-        indexes=[
-            KeysOnlyIndex("Links", parts=[
+        self.blockTable = Table.create(self.tableName+"Blocks",
+            schema=[
+                HashKey('blockId'),
+                RangeKey('blockNum', data_type=NUMBER)
+            ],
+            throughput={'read': 30, 'write': 10},
+            connection=connection
+        )
+        self.tablev2 = Table.create(self.tableName,
+            schema=[
                 HashKey('path'),
-                RangeKey('link')
-            ])
-        ],
+                RangeKey('name')
+            ],
+            throughput={'read': 30, 'write': 10},
+            indexes=[
+                KeysOnlyIndex("Links", parts=[
+                    HashKey('path'),
+                    RangeKey('link')
+                ])
+            ],
             connection=connection
         )
 
@@ -144,7 +157,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         while description["Table"]["TableStatus"] != "ACTIVE":
             print "Waiting for %s to create %d..." % (self.tableName, iter)
             iter += 1
-            time.sleep(1)
+            sleep(1)
             description = connection.describe_table(self.tableName)
         self.table = self.conn.get_table(self.tableName)
 

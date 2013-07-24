@@ -55,33 +55,14 @@ class File(BaseRecord):
         BaseRecord.create(self, accessor, path, attrs)
 
     def getFirstBlock(self, getData=False):
-#        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).read(getData)
         return self.record
 
     def getBlock(self, blockNum, getData=False, forUpdate=False):
         return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).read(getData, forUpdate)
 
     def createBlock(self, blockNum):
-#        assert blockNum != 0, "First block is a special block"
         return BlockRecord(self.accessor, os.path.join(self.record["blockId"], str(blockNum))).create(attrs={
-            "path": self.record["blockId"], "name": str(blockNum)
-        })
-
-    def createFirstBlock(self, mode):
-        l_time = int(time())
-        (uid, gid, unused) = fuse_get_context()
-        return BlockRecord(self.accessor, os.path.join(self.record["blockId"], "0")).create(attrs={
-            "path": self.record["blockId"],
-            "name": "0",
-            "st_nlink": 1,
-            "st_mtime": l_time,
-            "st_atime": l_time,
-            "st_ctime": l_time,
-            "st_mode": mode,
-            "st_size": 0,
-            'st_gid': gid, 'st_uid': uid,
-            'st_ino': int(self.record["blockId"]),
-            "version": 1
+            "blockId": self.record["blockId"], "blockNum": blockNum
         })
 
     def updateCTime(self):
@@ -120,8 +101,7 @@ class File(BaseRecord):
         block['deleted'] = not linked
         if not block["st_nlink"]:
             self.log.debug("No more links - deleting records")
-            items = self.accessor.tablev2.query(blockId__eq=self.record["blockId"], attributes=['name', 'path'])
-#            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
+            items = self.accessor.blockTable.query(blockId__eq=self.record["blockId"], attributes=['blockId', 'blockNum'])
             for entry in items:
                 entry.delete()
 
@@ -212,8 +192,7 @@ class File(BaseRecord):
         lastBlock = length / self.accessor.BLOCK_SIZE
         l_time = int(time())
 
-        items = self.accessor.tablev2.query(path__eq=self.path, name__gt=str(lastBlock),
-            attributes=["name", "path"])
+        items = self.accessor.tablev2.query(blockId__eq=self.record["blockId"], blockNum__gt=lastBlock, attributes=["blockId", "blockNum"])
         for entry in items:
             entry.delete()
 

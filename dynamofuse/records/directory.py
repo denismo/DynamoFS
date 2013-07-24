@@ -36,19 +36,19 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 class Directory(BaseRecord):
-
     def getattr(self):
         self.record["st_nlink"] = 1
         self.record["st_size"] = 0
         return self.record
 
     def list(self):
-        items = self.accessor.tablev2.query(path__eq = self.path, attributes=['name', 'deleted'])
+        items = self.accessor.tablev2.query(path__eq=self.path, attributes=['name', 'deleted'])
 
         for entry in items:
             if entry['name'] == "/" or ("deleted" in entry and entry['deleted']):
                 continue # This could be the folder itself
             yield entry['name']
+
 
     def moveTo(self, newPath):
         self.cloneItem(newPath, ['type', 'st_nlink', 'st_size', 'st_ino', 'st_mode'])
@@ -63,7 +63,10 @@ class Directory(BaseRecord):
             self.accessor.rename(os.path.join(self.path, entry), os.path.join(new, entry))
 
     def isEmpty(self):
-        return sum(1 for entry in self.accessor.tablev2.query(path__eq=self.path, attributes=['name', 'deleted']) if entry['name'] != "/" and not ("deleted" in entry and entry['deleted'])) == 0
+        return sum(
+            1 for entry in self.accessor.tablev2.query(path__eq=self.path, attributes=['name', 'deleted']) if entry[
+                                                                                                              'name'] != "/" and not (
+                "deleted" in entry and entry['deleted'])) == 0
 
     def isSticky(self):
         return self.record['st_mode'] & S_ISVTX
