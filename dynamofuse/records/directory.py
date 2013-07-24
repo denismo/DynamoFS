@@ -43,7 +43,7 @@ class Directory(BaseRecord):
         return self.record
 
     def list(self):
-        items = self.accessor.table.query(self.path, attributes_to_get=['name', 'deleted'])
+        items = self.accessor.tablev2.query(path__eq = self.path, attributes=['name', 'deleted'])
 
         for entry in items:
             if entry['name'] == "/" or ("deleted" in entry and entry['deleted']):
@@ -63,7 +63,7 @@ class Directory(BaseRecord):
             self.accessor.rename(os.path.join(self.path, entry), os.path.join(new, entry))
 
     def isEmpty(self):
-        return len(list(filter(self.accessor.table.query(self.path, attributes_to_get=['name', 'deleted']), lambda entry: entry['name'] != "/" and not ("deleted" in entry and entry['deleted'])))) == 0
+        return sum(1 for entry in self.accessor.tablev2.query(path__eq=self.path, attributes=['name', 'deleted']) if entry['name'] != "/" and not ("deleted" in entry and entry['deleted'])) == 0
 
     def isSticky(self):
         return self.record['st_mode'] & S_ISVTX

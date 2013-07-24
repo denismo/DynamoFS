@@ -93,20 +93,20 @@ class BaseRecord:
         item = self.accessor.table.new_item(attrs=newAttrs)
         item.put()
         self.record = item
-        logging.getLogger("dynamo-fuse").debug("Read record %s%s, version %d", self.record["path"], self.record["name"], self.record["version"])
+        logging.getLogger("dynamo-fuse").debug("Read record %s, version %d", os.path.join(self.record["path"], self.record["name"]), self.record["version"])
         self.record.save = self.safeSave(self.record, self.record.save)
 
     def init(self, accessor, path, record):
         self.accessor = accessor
         self.path = path
         self.record = record
-        logging.getLogger("dynamo-fuse").debug("Read record %s%s, version %d", record["path"], record["name"], record["version"])
+        logging.getLogger("dynamo-fuse").debug("Read record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
         self.record.save = self.safeSave(self.record, self.record.save)
 
     @staticmethod
     def safeSave(record, origSave):
         def safeSaveImpl():
-            logging.getLogger("dynamo-fuse").debug("Saving record %s%s, version %d", record["path"], record["name"], record["version"])
+            logging.getLogger("dynamo-fuse").debug("Saving record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
             record.add_attribute("version", 1)
             origSave(expected_value={"version": record["version"]})
         return safeSaveImpl
@@ -124,7 +124,7 @@ class BaseRecord:
 
         self.delete()
 
-    def cloneItem(self, path, attrsToPreserve=['type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid', 'deleted', 'blockId']):
+    def cloneItem(self, path, attrsToPreserve=('type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid', 'deleted', 'blockId')):
         attrs=dict(self.record)
         del attrs['name']
         del attrs['path']

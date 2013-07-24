@@ -120,8 +120,8 @@ class File(BaseRecord):
         block['deleted'] = not linked
         if not block["st_nlink"]:
             self.log.debug("No more links - deleting records")
-            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
-            # TODO Pagination
+            items = self.accessor.tablev2.query(blockId__eq=self.record["blockId"], attributes=['name', 'path'])
+#            items = self.accessor.table.query(self.record["blockId"], attributes_to_get=['name', 'path'])
             for entry in items:
                 entry.delete()
 
@@ -133,6 +133,8 @@ class File(BaseRecord):
         self._write(data, offset)
         block = self.getFirstBlock()
         block["st_size"] = max(block["st_size"], offset + len(data))
+        block['st_ctime'] = max(block['st_ctime'], int(time()))
+        block['st_mtime'] = max(block['st_mtime'], int(time()))
         block.save()
 
         return len(data)
@@ -210,9 +212,8 @@ class File(BaseRecord):
         lastBlock = length / self.accessor.BLOCK_SIZE
         l_time = int(time())
 
-        items = self.accessor.table.query(hash_key=self.path, range_key_condition=GT(str(lastBlock)),
-            attributes_to_get=["name", "path"])
-        # TODO Pagination
+        items = self.accessor.tablev2.query(path__eq=self.path, name__gt=str(lastBlock),
+            attributes=["name", "path"])
         for entry in items:
             entry.delete()
 
