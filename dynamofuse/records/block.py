@@ -40,7 +40,8 @@ blockHistory = deque()
 blockLog = logging.getLogger("dynamo-fuse-block")
 
 class BlockRecord:
-    BLOCK_ATTRS = ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid', 'st_blksize', 'version']
+    BLOCK_ATTRS = ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid',
+                   'st_blksize', 'version', "blockId", "blockNum"]
     BLOCK_ALL_ATTRS = ["data"] + BLOCK_ATTRS
 
     log = logging.getLogger("dynamo-fuse-block")
@@ -57,8 +58,8 @@ class BlockRecord:
         return self
 
     def create(self, attrs):
-        self.item = self.accessor.newItem(attrs)
-        self.item["version"] = 1
+        attrs["version"] = 1
+        self.item = self.accessor.blockTable.new_item(attrs=attrs)
         self.item.put()
         BlockRecord.cacheItem(self.path, self.item, self.item["version"])
         return self
@@ -83,16 +84,21 @@ class BlockRecord:
 
     def writeData(self, startOffset, dataSlice):
         if "data" in self.item:
-            self.log.debug("write block %s has data", self.item["name"])
+            self.log.debug("write block %s has data", self.path)
             itemData = self.item["data"].value
             self.item['data'] = Binary(itemData[0:startOffset] + dataSlice + itemData[startOffset + len(dataSlice):])
         else:
-            self.log.debug("write block %s has NO data", self.item["name"])
+            self.log.debug("write block %s has NO data", self.path)
             self.item['data'] = Binary(dataSlice)
 
     @staticmethod
     def getBlockItem(accessor, path, getData=False, forUpdate=False):
-        blockItem = accessor.getItemOrNone(path, attrs=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
+        # TODO Optimise - should not get Data if not necessary
+        try:
+            blockItem = accessor.blockTable.get_item(os.path.dirname(path), int(os.path.basename(path)),
+                attributes_to_get=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
+        except DynamoDBKeyNotFoundError:
+            blockItem = None
         cachedBlockItem = BlockRecord.getCachedBlockItem(path, forUpdate)
         if not blockItem:
             if cachedBlockItem and (getData and "data" in cachedBlockItem or not getData):
@@ -101,7 +107,8 @@ class BlockRecord:
             else:
                 blockLog.debug('Unable to find block or cached block for %s', path)
                 raise FuseOSError(ENOENT)
-        if cachedBlockItem and blockItem["version"] < cachedBlockItem["version"] and (getData and "data" in cachedBlockItem or not getData):
+        if cachedBlockItem and blockItem["version"] < cachedBlockItem["version"] and (
+            getData and "data" in cachedBlockItem or not getData):
             blockLog.debug('Returning cached block item for %s', path)
             return cachedBlockItem
         else:

@@ -119,7 +119,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         try:
             self.table = self.conn.get_table(tableName)
             self.tablev2 = Table(tableName, connection=connection)
-            self.blockTable = Table(self.tableName+"Blocks", connection=connection)
+            self.blockTable = self.conn.get_table(self.tableName+"Blocks")
+            self.blockTablev2 = Table(self.tableName+"Blocks", connection=connection)
         except:
             self.createTable()
         self.counter = itertools.count()
@@ -129,7 +130,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def createTable(self):
         connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
             aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'], region=self.regionv2)
-        self.blockTable = Table.create(self.tableName+"Blocks",
+        self.blockTablev2 = Table.create(self.tableName+"Blocks",
             schema=[
                 HashKey('blockId'),
                 RangeKey('blockNum', data_type=NUMBER)
@@ -160,6 +161,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             sleep(1)
             description = connection.describe_table(self.tableName)
         self.table = self.conn.get_table(self.tableName)
+        self.blockTable = self.conn.get_table(self.tableName + "Blocks")
 
     def init(self, conn):
         self.log.debug("init")

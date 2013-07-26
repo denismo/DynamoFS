@@ -99,9 +99,9 @@ class File(BaseRecord):
         block.add_attribute("st_nlink", -1)
         block['st_ctime'] = max(block['st_ctime'], int(time()))
         block['deleted'] = not linked
-        if not block["st_nlink"]:
+        if block["st_nlink"] == 1:
             self.log.debug("No more links - deleting records")
-            items = self.accessor.blockTable.query(blockId__eq=self.record["blockId"], attributes=['blockId', 'blockNum'])
+            items = self.accessor.blockTablev2.query(blockId__eq=self.record["blockId"], attributes=['blockId', 'blockNum'])
             for entry in items:
                 entry.delete()
 
@@ -192,7 +192,7 @@ class File(BaseRecord):
         lastBlock = length / self.accessor.BLOCK_SIZE
         l_time = int(time())
 
-        items = self.accessor.tablev2.query(blockId__eq=self.record["blockId"], blockNum__gt=lastBlock, attributes=["blockId", "blockNum"])
+        items = self.accessor.blockTable.query(blockId__eq=self.record["blockId"], blockNum__gt=lastBlock, attributes=["blockId", "blockNum"])
         for entry in items:
             entry.delete()
 
