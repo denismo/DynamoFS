@@ -40,8 +40,7 @@ blockHistory = deque()
 blockLog = logging.getLogger("dynamo-fuse-block")
 
 class BlockRecord:
-    BLOCK_ATTRS = ["st_size", "st_nlink", "st_mtime", "st_atime", "st_ctime", "st_mode", 'st_uid', 'st_gid',
-                   'st_blksize', 'version', "blockId", "blockNum"]
+    BLOCK_ATTRS = ['version', "blockId", "blockNum"]
     BLOCK_ALL_ATTRS = ["data"] + BLOCK_ATTRS
 
     log = logging.getLogger("dynamo-fuse-block")
