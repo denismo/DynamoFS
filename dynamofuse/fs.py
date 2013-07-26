@@ -409,8 +409,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.checkAccess(source, R_OK)
 
         item = self.getRecordOrThrow(source)
-        if not item.isFile() and not item.isNode():
+        if not item.isFile() and not item.isNode() and not item.isHardLink():
             raise FuseOSError(EINVAL)
+
+        if item.isHardLink():
+            item = item.getLink()
 
         self.checkAccess(os.path.dirname(target), R_OK|W_OK|X_OK)
         self.checkAccess(os.path.dirname(source), R_OK|X_OK)

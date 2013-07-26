@@ -48,6 +48,9 @@ class Link(BaseRecord):
     def getRecord(self):
         return self.link.getRecord()
 
+    def getLink(self):
+        return self.link
+
     def init(self, accessor, path, record):
         self.accessor = accessor
         self.path = path
