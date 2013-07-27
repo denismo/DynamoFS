@@ -46,6 +46,7 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 MAX_RETRIES = 5
+DELETED_LINKS="$deleted$"
 
 def retry(m):
     def wrappedM(*args):
@@ -105,10 +106,10 @@ class BaseRecord:
 
     @staticmethod
     def safeSave(record, origSave):
-        def safeSaveImpl():
+        def safeSaveImpl(**kwargs):
             logging.getLogger("dynamo-fuse").debug("Saving record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
             record.add_attribute("version", 1)
-            origSave(expected_value={"version": record["version"]})
+            return origSave(expected_value={"version": record["version"]}, **kwargs)
         return safeSaveImpl
 
     def getRecord(self):
@@ -119,7 +120,7 @@ class BaseRecord:
 
         self.updateDirectoryMCTime(self.path)
 
-    def moveTo(self, newPath):
+    def moveTo(self, newPath, forceUpdate=False):
         self.cloneItem(newPath)
 
         self.delete()
@@ -144,6 +145,9 @@ class BaseRecord:
 
     def getattr(self):
         return self.getRecord()
+
+    def isHidden(self):
+        return 'hidden' in self.getRecord()
 
     @retry
     def chmod(self, mode):

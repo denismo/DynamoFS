@@ -26,7 +26,7 @@ from dynamofuse.records.directory import Directory
 from dynamofuse.records.file import File
 from dynamofuse.records.node import Node
 from dynamofuse.records.symlink import Symlink
-from dynamofuse.base import BaseRecord
+from dynamofuse.base import BaseRecord, DELETED_LINKS
 from dynamofuse.records.link import Link
 from errno import *
 from os.path import realpath
@@ -169,6 +169,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def __createRoot(self):
         if not self.table.has_item("/", "/"):
             self.mkdir("/", 0755)
+        if not self.table.has_item("/", DELETED_LINKS):
+            self.mkdir("/" + DELETED_LINKS, 0755)
 
     def chmod(self, path, mode):
         self.log.debug("chmod(%s, mode=%d)", path, mode)
@@ -191,7 +193,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         self.checkAccess(os.path.dirname(path), X_OK)
 
-        return self.getRecordOrThrow(path).getattr()
+        record = self.getRecordOrThrow(path)
+        if record.isHidden():
+            raise FuseOSError(ENOENT)
+
+        return record.getattr()
 
     def open(self, path, flags):
         self.log.debug("open(%s, flags=0x%x)", path, flags)
@@ -335,7 +341,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
         elif mode & S_IFREG == S_IFREG:
             type = "File"
 
-        record = self.createRecord(path, type, attrs={'st_mode': mode})
+        attrs = {'st_mode': mode}
+        if os.path.basename(path) == DELETED_LINKS:
+            attrs['hidden'] = True
+        record = self.createRecord(path, type, attrs=attrs)
 
         # Update
         if path != "/":
@@ -423,8 +432,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         Link().createRecord(self, target, {}, item)
 
-        sourceDir = self.getRecordOrThrow(os.path.dirname(source))
-        sourceDir.updateCTime()
+        item.updateDirectoryMCTime(source)
+
+#        sourceDir = self.getRecordOrThrow(os.path.dirname(source))
+#        sourceDir.updateCTime()
 
         return 0
 
@@ -598,6 +609,7 @@ def cleanup(region, tableName):
     for item in table.scan(attributes_to_get=["name","path"]):
         if item["path"] == "/" and item["name"] == "/": continue
         if item["path"] == "global" and item["name"] == "counter": continue
+        if item["path"] == '/' and item['name'] == DELETED_LINKS: continue
         item.delete()
 
 if __name__ == '__main__':

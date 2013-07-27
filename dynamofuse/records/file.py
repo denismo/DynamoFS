@@ -18,7 +18,7 @@ __author__ = 'Denis Mikhalkin'
 
 from posix import R_OK, X_OK, W_OK
 from dynamofuse.records.block import BlockRecord
-from dynamofuse.base import BaseRecord
+from dynamofuse.base import BaseRecord, DELETED_LINKS
 from errno import  ENOENT, EINVAL, EPERM
 import os
 from os.path import realpath, join, dirname, basename
@@ -32,6 +32,7 @@ import cStringIO
 from stat import *
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 import itertools
+import uuid
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -98,7 +99,8 @@ class File(BaseRecord):
         self.log.debug("Delete file, linked=%s, links=%d", linked, block["st_nlink"])
         block.add_attribute("st_nlink", -1)
         block['st_ctime'] = max(block['st_ctime'], int(time()))
-        block['deleted'] = not linked or block['deleted']
+        delete = not linked and ('deleted' in block and not block['deleted'] or not 'deleted' in block)
+        block['deleted'] = not linked or ('deleted' in block and block['deleted'])
         if block["st_nlink"] == 1:
             self.log.debug("No more links - deleting records")
             items = self.accessor.blockTablev2.query(blockId__eq=self.record["blockId"], attributes=['blockId', 'blockNum'])
@@ -107,7 +109,13 @@ class File(BaseRecord):
 
             BaseRecord.delete(self)
         else:
-            block.save()
+#            resp = block.save(return_values='ALL_NEW')
+#            self.log.debug('After deleting: ' + str(resp))
+            if delete:
+                block['st_nlink'] -= 1
+                self.moveTo(os.path.join("/" + DELETED_LINKS, uuid.uuid4().hex), forceUpdate=True)
+            else:
+                block.save()
 
     def write(self, data, offset):
         self._write(data, offset)
@@ -171,12 +179,12 @@ class File(BaseRecord):
         finally:
             data.close()
 
-    def moveTo(self, newPath):
+    def moveTo(self, newPath, forceUpdate=False):
         # Files can be hard-linked. When moved, they will update the targets of their hard-links to point to new name (as hard links are actually by name)
         self.cloneItem(newPath)
 
         # TODO: A problem - in order to perform this query we have to run it against hash_key + "link" which is impossible with current design
-        if self.record["st_nlink"] > 1:
+        if self.record["st_nlink"] > 1 or forceUpdate:
             self.log.debug("Retargeting links from %s to %s" % (self.path, newPath))
             items = self.accessor.table.scan({"link":EQ(self.path)})
             for link in items:
@@ -184,7 +192,7 @@ class File(BaseRecord):
                 link.save()
 
             # This will force delete the block
-            self.record["st_nlink"] = 1
+#            self.record["st_nlink"] = 1
 
         self.record.delete()
 
@@ -192,7 +200,7 @@ class File(BaseRecord):
         lastBlock = length / self.accessor.BLOCK_SIZE
         l_time = int(time())
 
-        items = self.accessor.blockTable.query(blockId__eq=self.record["blockId"], blockNum__gt=lastBlock, attributes=["blockId", "blockNum"])
+        items = self.accessor.blockTablev2.query(blockId__eq=self.record["blockId"], blockNum__gt=lastBlock, attributes=["blockId", "blockNum"])
         for entry in items:
             entry.delete()
 

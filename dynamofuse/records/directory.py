@@ -42,10 +42,10 @@ class Directory(BaseRecord):
         return self.record
 
     def list(self):
-        items = self.accessor.tablev2.query(path__eq=self.path, attributes=['name', 'deleted'])
+        items = self.accessor.tablev2.query(path__eq=self.path, attributes=['name', 'deleted', 'hidden'])
 
         for entry in items:
-            if entry['name'] == "/" or ("deleted" in entry and entry['deleted']):
+            if entry['name'] == "/" or ("deleted" in entry and entry['deleted']) or ('hidden' in entry):
                 continue # This could be the folder itself
             yield entry['name']
 
