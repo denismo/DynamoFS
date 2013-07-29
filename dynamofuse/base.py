@@ -92,22 +92,22 @@ class BaseRecord:
             newAttrs[k] = v
         self.log.debug("Create attrs: %s", newAttrs)
         item = self.accessor.table.new_item(attrs=newAttrs)
-        item.put()
+        item.put(expected_value={'name':False, 'path':False})
         self.record = item
-        logging.getLogger("dynamo-fuse").debug("Read record %s, version %d", os.path.join(self.record["path"], self.record["name"]), self.record["version"])
+        logging.getLogger("dynamo-fuse-record").debug("Read record %s, version %d", os.path.join(self.record["path"], self.record["name"]), self.record["version"])
         self.record.save = self.safeSave(self.record, self.record.save)
 
     def init(self, accessor, path, record):
         self.accessor = accessor
         self.path = path
         self.record = record
-        logging.getLogger("dynamo-fuse").debug("Read record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
+        logging.getLogger("dynamo-fuse-record").debug("Read record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
         self.record.save = self.safeSave(self.record, self.record.save)
 
     @staticmethod
     def safeSave(record, origSave):
         def safeSaveImpl(**kwargs):
-            logging.getLogger("dynamo-fuse").debug("Saving record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
+            logging.getLogger("dynamo-fuse-record").debug("Saving record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
             record.add_attribute("version", 1)
             return origSave(expected_value={"version": record["version"]}, **kwargs)
         return safeSaveImpl
@@ -271,7 +271,7 @@ class BaseRecord:
 
     def modeAccess(self, mode, st_mode, st_uid, st_gid):
         (uid, gid, unused) = fuse_get_context()
-        self.log.debug("modeAccess, node %x(%s) %d %d, input %x %d %d", st_mode, self.modeToStr(st_mode), st_uid, st_gid, mode, uid, gid)
+#        self.log.debug("modeAccess, node %x(%s) %d %d, input %x %d %d", st_mode, self.modeToStr(st_mode), st_uid, st_gid, mode, uid, gid)
         if mode & R_OK:
             if not (not uid or uid == st_uid and st_mode & S_IRUSR or uid != st_uid and gid == st_gid and st_mode & S_IRGRP or uid != st_uid and gid != st_gid and st_mode & S_IROTH):
                 return False

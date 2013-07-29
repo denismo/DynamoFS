@@ -59,12 +59,14 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 ALL_ATTRS = None
-NAME_MAX=255 # To match what is expected by Fuse and FSTest
-KEY_MAX=1024
+NAME_MAX = 255 # To match what is expected by Fuse and FSTest
+KEY_MAX = 1024
 global logStream
 
 class BotoExceptionMixin:
     log = logging.getLogger("dynamo-fuse")
+    accessLog = logging.getLogger("dynamo-fuse-access")
+
     def __call__(self, op, path, *args):
         try:
             ret = getattr(self, op)(path, *args)
@@ -119,8 +121,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         try:
             self.table = self.conn.get_table(tableName)
             self.tablev2 = Table(tableName, connection=connection)
-            self.blockTable = self.conn.get_table(self.tableName+"Blocks")
-            self.blockTablev2 = Table(self.tableName+"Blocks", connection=connection)
+            self.blockTable = self.conn.get_table(self.tableName + "Blocks")
+            self.blockTablev2 = Table(self.tableName + "Blocks", connection=connection)
         except:
             self.createTable()
         self.counter = itertools.count()
@@ -130,7 +132,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def createTable(self):
         connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
             aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'], region=self.regionv2)
-        self.blockTablev2 = Table.create(self.tableName+"Blocks",
+        self.blockTablev2 = Table.create(self.tableName + "Blocks",
             schema=[
                 HashKey('blockId'),
                 RangeKey('blockNum', data_type=NUMBER)
@@ -229,7 +231,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         self.checkAccess(os.path.dirname(path), X_OK)
         self.checkFileExists(path)
-        self.checkAccess(path, R_OK|X_OK)
+        self.checkAccess(path, R_OK | X_OK)
 
         return self.allocId()
 
@@ -238,7 +240,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         # Verify the directory exists
         dir = self.getRecordOrThrow(path)
 
-        if dir.access(R_OK|X_OK):
+        if dir.access(R_OK | X_OK):
             raise FuseOSError(EACCES)
 
         yield '.'
@@ -249,7 +251,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("mkdir(%s)", path)
 
         if path != "/":
-            self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
+            self.checkAccess(os.path.dirname(path), R_OK | W_OK | X_OK)
 
         self.create(path, mode | S_IFDIR)
 
@@ -261,7 +263,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if not item.isDirectory():
             raise FuseOSError(EINVAL)
 
-        self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
+        self.checkAccess(os.path.dirname(path), R_OK | W_OK | X_OK)
         self.checkSticky(path)
 
         if len(list(item.list())) > 0:
@@ -276,8 +278,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(EINVAL)
 
         self.checkPath(new)
-        self.checkAccess(os.path.dirname(old), R_OK|W_OK|X_OK)
-        self.checkAccess(os.path.dirname(new), R_OK|W_OK|X_OK)
+        self.checkAccess(os.path.dirname(old), R_OK | W_OK | X_OK)
+        self.checkAccess(os.path.dirname(new), R_OK | W_OK | X_OK)
         self.checkSticky(old, new)
 
         item = self.getRecordOrThrow(old)
@@ -310,12 +312,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         self.checkAccess(os.path.dirname(target), R_OK | W_OK | X_OK)
 
-        # getItemOrNone will check path
-        item = self.getItemOrNone(target, attrs=[])
-        if item is not None:
+        try:
+            record = self.createRecord(target, "Symlink", attrs={'symlink': source})
+        except DynamoDBConditionalCheckFailedError: # Means the item already exists
             raise FuseOSError(EEXIST)
 
-        record = self.createRecord(target, "Symlink", attrs={'symlink': source})
         record.updateDirectoryMCTime(target)
 
         return 0
@@ -324,12 +325,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.log.debug("create(%s, %d)", path, mode)
 
         if path != "/":
-            self.checkAccess(os.path.dirname(path), R_OK|X_OK|W_OK)
-
-        # getItemOrNone will check path
-        item = self.getItemOrNone(path, attrs=[])
-        if item is not None:
-            raise FuseOSError(EEXIST)
+            self.checkAccess(os.path.dirname(path), R_OK | X_OK | W_OK)
 
         type = "Node"
         if mode & S_IFDIR == S_IFDIR:
@@ -344,7 +340,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
         attrs = {'st_mode': mode}
         if os.path.basename(path) == DELETED_LINKS:
             attrs['hidden'] = True
-        record = self.createRecord(path, type, attrs=attrs)
+
+        try:
+            record = self.createRecord(path, type, attrs=attrs)
+        except DynamoDBConditionalCheckFailedError: # Means the item already exists
+            raise FuseOSError(EEXIST)
 
         # Update
         if path != "/":
@@ -389,7 +389,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def unlink(self, path):
         self.log.debug("unlink(%s)", path)
 
-        self.checkAccess(os.path.dirname(path), W_OK|X_OK)
+        self.checkAccess(os.path.dirname(path), W_OK | X_OK)
         self.checkSticky(path)
 
         self.getRecordOrThrow(path).delete()
@@ -424,23 +424,23 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if item.isHardLink():
             item = item.getLink()
 
-        self.checkAccess(os.path.dirname(target), R_OK|W_OK|X_OK)
-        self.checkAccess(os.path.dirname(source), R_OK|X_OK)
+        self.checkAccess(os.path.dirname(target), R_OK | W_OK | X_OK)
+        self.checkAccess(os.path.dirname(source), R_OK | X_OK)
 
-        if self.getItemOrNone(target, attrs=[]) is not None:
+        try:
+            record = Link()
+            record.createRecord(self, target, {}, item)
+        except DynamoDBConditionalCheckFailedError: # Means the item already exists
             raise FuseOSError(EEXIST)
 
-        Link().createRecord(self, target, {}, item)
-
         item.updateDirectoryMCTime(source)
-
-#        sourceDir = self.getRecordOrThrow(os.path.dirname(source))
-#        sourceDir.updateCTime()
+        record.updateDirectoryMCTime(target)
 
         return 0
 
     def lock(self, path, fip, cmd, lock):
-        self.log.debug("lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start, lock.l_len, lock.l_type)
+        self.log.debug("lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start,
+            lock.l_len, lock.l_type)
         return 0
         # Lock is optional if no concurrent access is expected
         # raise FuseOSError(EOPNOTSUPP)
@@ -452,13 +452,12 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def mknod(self, path, mode, dev):
         self.log.debug("mknod(%s, mode=%d, dev=%d)", path, mode, dev)
 
-        self.checkAccess(os.path.dirname(path), R_OK|W_OK|X_OK)
+        self.checkAccess(os.path.dirname(path), R_OK | W_OK | X_OK)
 
-        item = self.getItemOrNone(path, attrs=[])
-        if item is not None:
+        try:
+            record = self.createRecord(path, "File", attrs={'st_mode': mode, 'st_rdev': dev})
+        except DynamoDBConditionalCheckFailedError: # Means the item already exists
             raise FuseOSError(EEXIST)
-
-        record = self.createRecord(path, "File", attrs={'st_mode': mode, 'st_rdev': dev})
 
         # Update
         if path != "/":
@@ -468,7 +467,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def access(self, path, amode):
         (uid, gid, unused) = fuse_get_context()
-        self.log.debug("access(%s, mode=%d) by (%d, %d)", path, amode, uid, gid)
+        self.accessLog.debug("access(%s, mode=%d) by (%d, %d)", path, amode, uid, gid)
         item = self.getRecordOrThrow(path)
         return item.access(amode)
 
@@ -563,7 +562,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            res = self.initRecord(filepath, self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True))
+            res = self.initRecord(filepath,
+                self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True))
             if not ignoreDeleted and res.isDeleted():
                 raise FuseOSError(ENOENT)
             return res
@@ -579,7 +579,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            res = self.initRecord(path, self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True))
+            res = self.initRecord(path,
+                self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True))
             if not ignoreDeleted and res.isDeleted():
                 raise FuseOSError(ENOENT)
             return res
@@ -602,11 +603,12 @@ class DynamoFS(BotoExceptionMixin, Operations):
         res = idItem.save(return_values="ALL_NEW")
         return res["Attributes"]["value"]
 
+
 def cleanup(region, tableName):
     conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
         aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
     table = conn.get_table(tableName)
-    for item in table.scan(attributes_to_get=["name","path"]):
+    for item in table.scan(attributes_to_get=["name", "path"]):
         if item["path"] == "/" and item["name"] == "/": continue
         if item["path"] == "global" and item["name"] == "counter": continue
         if item["path"] == '/' and item['name'] == DELETED_LINKS: continue
@@ -620,6 +622,8 @@ if __name__ == '__main__':
     logStream = open('/var/log/dynamo-fuse.log', 'w', 0)
     logging.basicConfig(stream=logStream)
     logging.getLogger("dynamo-fuse").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-access").setLevel(logging.INFO)
+    logging.getLogger("dynamo-fuse-record").setLevel(logging.INFO)
     logging.getLogger("dynamo-fuse-file").setLevel(logging.DEBUG)
     logging.getLogger("fuse.log-mixin").setLevel(logging.INFO)
     logging.getLogger("dynamo-fuse-lock").setLevel(logging.DEBUG)
@@ -631,7 +635,8 @@ if __name__ == '__main__':
     elif argv[3] == "createTable":
         DynamoFS(argv[1], argv[2]).createTable()
     else:
-        fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=False, auto_cache=False,
-                    noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
+        fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=False,
+            auto_cache=False,
+            noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 
 
