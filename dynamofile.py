@@ -37,7 +37,7 @@ if not hasattr(__builtins__, 'bytes'):
 class DynamoFile:
 
     def __init__(self, item, accessor):
-        self.log = logging.getLogger("dynamo-fuse-file")
+        self.log = logging.getLogger("dynamo-fuse-file  ")
         self.accessor = accessor
         self.path = item["blockId"]
 
@@ -116,7 +116,7 @@ class DynamoFile:
 
 
 class DynamoLock:
-    log = logging.getLogger("dynamo-fuse-lock")
+    log = logging.getLogger("dynamo-fuse-lock  ")
 
     def __init__(self, path, accessor):
         self.path = path

@@ -17,6 +17,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
+from dynamofuse.lock import DynamoLock
 
 __author__ = 'Denis Mikhalkin'
 
@@ -224,6 +225,9 @@ class BaseRecord:
 
     def getParent(self, fs):
         return fs.getRecordOrThrow(os.path.dirname(self.path))
+
+    def takeLock(self):
+        return DynamoLock(self.path, self.accessor)
 
     def __getitem__(self, item):
         return self.record[item]

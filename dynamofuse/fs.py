@@ -64,34 +64,34 @@ KEY_MAX = 1024
 global logStream
 
 class BotoExceptionMixin:
-    log = logging.getLogger("dynamo-fuse")
+    log = logging.getLogger("dynamo-fuse-oper  ")
     accessLog = logging.getLogger("dynamo-fuse-access")
 
     def __call__(self, op, path, *args):
         try:
             ret = getattr(self, op)(path, *args)
-            self.log.debug("  <- %s: %s", op, repr(ret))
+            self.log.debug("  - %s: %s", op, repr(ret))
             if logStream:
                 logStream.flush()
             return ret
         except BotoServerError, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  - %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
         except BotoClientError, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  - %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
         except DynamoDBResponseError, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  - %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
         except FuseOSError, e:
-            self.log.error("  <- %s: FuseOSError(%s)", op, e.strerror)
+            self.log.error("  - %s: FuseOSError(%s)", op, e.strerror)
             raise e
         except BaseException, e:
             exc_type, exc_value, exc_traceback = sys.exc_info()
-            self.log.error("  <- %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+            self.log.error("  - %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
 
 
@@ -107,7 +107,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
     }
 
     def __init__(self, region, tableName):
-        self.log = logging.getLogger("dynamo-fuse")
+        self.log = logging.getLogger("dynamo-fuse-oper  ")
         self.tableName = tableName
         self.region = region
         for reg in boto.dynamodb2.regions():
@@ -166,7 +166,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.blockTable = self.conn.get_table(self.tableName + "Blocks")
 
     def init(self, conn):
-        self.log.debug("init")
+        self.log.debug(" init")
 
     def __createRoot(self):
         if not self.table.has_item("/", "/"):
@@ -175,7 +175,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             self.mkdir("/" + DELETED_LINKS, 0755)
 
     def chmod(self, path, mode):
-        self.log.debug("chmod(%s, mode=%d)", path, mode)
+        self.log.debug(" chmod(%s, mode=%d)", path, mode)
 
         self.checkAccess(os.path.dirname(path), X_OK)
 
@@ -183,7 +183,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return 0
 
     def chown(self, path, uid, gid):
-        self.log.debug("chown(%s, uid=%d, gid=%d)", path, uid, gid)
+        self.log.debug(" chown(%s, uid=%d, gid=%d)", path, uid, gid)
 
         self.checkAccess(os.path.dirname(path), X_OK)
 
@@ -202,7 +202,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return record.getattr()
 
     def open(self, path, flags):
-        self.log.debug("open(%s, flags=0x%x)", path, flags)
+        self.log.debug(" open(%s, flags=0x%x)", path, flags)
 
         access = X_OK
         if flags & os.O_CREAT: access |= W_OK
@@ -218,7 +218,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return self.allocId()
 
     def utimens(self, path, times=None):
-        self.log.debug("utimens(%s)", path)
+        self.log.debug(" utimens(%s)", path)
         now = int(time())
         atime, mtime = times if times else (now, now)
 
@@ -227,7 +227,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         item.utimens(atime, mtime)
 
     def opendir(self, path):
-        self.log.debug("opendir(%s)", path)
+        self.log.debug(" opendir(%s)", path)
 
         self.checkAccess(os.path.dirname(path), X_OK)
         self.checkFileExists(path)
@@ -236,7 +236,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return self.allocId()
 
     def readdir(self, path, fh=None):
-        self.log.debug("readdir(%s)", path)
+        self.log.debug(" readdir(%s)", path)
         # Verify the directory exists
         dir = self.getRecordOrThrow(path)
 
@@ -248,7 +248,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         for v in dir.list(): yield v
 
     def mkdir(self, path, mode):
-        self.log.debug("mkdir(%s)", path)
+        self.log.debug(" mkdir(%s)", path)
 
         if path != "/":
             self.checkAccess(os.path.dirname(path), R_OK | W_OK | X_OK)
@@ -256,7 +256,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.create(path, mode | S_IFDIR)
 
     def rmdir(self, path):
-        self.log.debug("rmdir(%s)", path)
+        self.log.debug(" rmdir(%s)", path)
 
         item = self.getRecordOrThrow(path)
 
@@ -272,7 +272,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         item.delete()
 
     def rename(self, old, new):
-        self.log.debug("rename(%s, %s)", old, new)
+        self.log.debug(" rename(%s, %s)", old, new)
         if old == new: return
         if old == "/" or new == "/":
             raise FuseOSError(EINVAL)
@@ -298,7 +298,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         item.moveTo(new)
 
     def readlink(self, path):
-        self.log.debug("readlink(%s)", path)
+        self.log.debug(" readlink(%s)", path)
 
         item = self.getRecordOrThrow(path)
 
@@ -308,7 +308,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return item["symlink"]
 
     def symlink(self, target, source):
-        self.log.debug("symlink(%s, %s)", target, source)
+        self.log.debug(" symlink(%s, %s)", target, source)
 
         self.checkAccess(os.path.dirname(target), R_OK | W_OK | X_OK)
 
@@ -322,7 +322,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return 0
 
     def create(self, path, mode, fh=None):
-        self.log.debug("create(%s, %d)", path, mode)
+        self.log.debug(" create(%s, %d)", path, mode)
 
         if path != "/":
             self.checkAccess(os.path.dirname(path), R_OK | X_OK | W_OK)
@@ -353,7 +353,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return self.allocId()
 
     def statfs(self, path):
-        self.log.debug("statfs(%s)", path)
+        self.log.debug(" statfs(%s)", path)
         return dict(
             f_bsize=self.BLOCK_SIZE,
             f_frsize=self.BLOCK_SIZE,
@@ -369,11 +369,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
         )
 
     def destroy(self, path):
-        self.log.debug("destroy(%s)", path)
+        self.log.debug(" destroy(%s)", path)
         self.table.refresh(wait_for_active=True)
 
     def truncate(self, path, length, fh=None):
-        self.log.debug("truncate(%s, %d)", path, length)
+        self.log.debug(" truncate(%s, %d)", path, length)
 
         item = self.getRecordOrThrow(path)
         if not item.isFile():
@@ -387,7 +387,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         item.truncate(length)
 
     def unlink(self, path):
-        self.log.debug("unlink(%s)", path)
+        self.log.debug(" unlink(%s)", path)
 
         self.checkAccess(os.path.dirname(path), W_OK | X_OK)
         self.checkSticky(path)
@@ -395,7 +395,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.getRecordOrThrow(path).delete()
 
     def write(self, path, data, offset, fh):
-        self.log.debug("write(%s, len=%d, offset=%d)", path, len(data), offset)
+        self.log.debug(" write(%s, len=%d, offset=%d)", path, len(data), offset)
 
         item = self.getRecordOrThrow(path)
         if not item.isFile() and not item.isHardLink():
@@ -404,7 +404,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return item.write(data, offset)
 
     def read(self, path, size, offset, fh):
-        self.log.debug("read(%s, size=%d, offset=%d)", path, size, offset)
+        self.log.debug(" read(%s, size=%d, offset=%d)", path, size, offset)
 
         item = self.getRecordOrThrow(path)
         if not item.isFile() and not item.isHardLink():
@@ -413,7 +413,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return item.read(offset, size)
 
     def link(self, target, source):
-        self.log.debug("link(%s, %s)", target, source)
+        self.log.debug(" link(%s, %s)", target, source)
 
         self.checkAccess(source, R_OK)
 
@@ -439,18 +439,18 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return 0
 
     def lock(self, path, fip, cmd, lock):
-        self.log.debug("lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start,
+        self.log.debug(" lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start,
             lock.l_len, lock.l_type)
         return 0
         # Lock is optional if no concurrent access is expected
         # raise FuseOSError(EOPNOTSUPP)
 
     def bmap(self, path, blocksize, idx):
-        self.log.debug("bmap(%s, blocksize=%d, idx=%d)", path, blocksize, idx)
+        self.log.debug(" bmap(%s, blocksize=%d, idx=%d)", path, blocksize, idx)
         raise FuseOSError(EOPNOTSUPP)
 
     def mknod(self, path, mode, dev):
-        self.log.debug("mknod(%s, mode=%d, dev=%d)", path, mode, dev)
+        self.log.debug(" mknod(%s, mode=%d, dev=%d)", path, mode, dev)
 
         self.checkAccess(os.path.dirname(path), R_OK | W_OK | X_OK)
 
@@ -467,7 +467,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def access(self, path, amode):
         (uid, gid, unused) = fuse_get_context()
-        self.accessLog.debug("access(%s, mode=%d) by (%d, %d)", path, amode, uid, gid)
+        self.accessLog.debug(" access(%s, mode=%d) by (%d, %d)", path, amode, uid, gid)
         item = self.getRecordOrThrow(path)
         return item.access(amode)
 
@@ -621,14 +621,14 @@ if __name__ == '__main__':
 
     logStream = open('/var/log/dynamo-fuse.log', 'w', 0)
     logging.basicConfig(stream=logStream)
-    logging.getLogger("dynamo-fuse").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-oper  ").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-access").setLevel(logging.INFO)
     logging.getLogger("dynamo-fuse-record").setLevel(logging.INFO)
-    logging.getLogger("dynamo-fuse-file").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-file  ").setLevel(logging.DEBUG)
     logging.getLogger("fuse.log-mixin").setLevel(logging.INFO)
-    logging.getLogger("dynamo-fuse-lock").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-lock  ").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-master").setLevel(logging.DEBUG)
-    logging.getLogger("dynamo-fuse-block").setLevel(logging.DEBUG)
+    logging.getLogger("dynamo-fuse-block ").setLevel(logging.DEBUG)
 
     if argv[3] == "cleanup":
         cleanup(argv[1], argv[2])

@@ -77,6 +77,13 @@ class File(BaseRecord):
     def isDeleted(self):
         return 'deleted' in self.record and self.record['deleted']
 
+    def link(self):
+        # TODO: Locking? What if the file is deleted?
+        block = self.getFirstBlock()
+        block.add_attribute("st_nlink", 1)
+        block['st_ctime'] = max(block['st_ctime'], int(time()))
+        block.save()
+
     ################# OPERATIONS ##########################
 
     def getattr(self):
@@ -85,14 +92,9 @@ class File(BaseRecord):
         block["st_ino"] = int(self.record["blockId"])
         return block
 
-    def link(self):
-        block = self.getFirstBlock()
-        block.add_attribute("st_nlink", 1)
-        block['st_ctime'] = max(block['st_ctime'], int(time()))
-        block.save()
-
     def delete(self):
-        self.deleteFile()
+        with self.takeLock():
+            self.deleteFile()
 
     def deleteFile(self, linked=False):
         block = self.getFirstBlock()
@@ -118,14 +120,15 @@ class File(BaseRecord):
                 block.save()
 
     def write(self, data, offset):
-        self._write(data, offset)
-        block = self.getFirstBlock()
-        block["st_size"] = max(block["st_size"], offset + len(data))
-        block['st_ctime'] = max(block['st_ctime'], int(time()))
-        block['st_mtime'] = max(block['st_mtime'], int(time()))
-        block.save()
+        with self.takeLock():
+            self._write(data, offset)
+            block = self.getFirstBlock()
+            block["st_size"] = max(block["st_size"], offset + len(data))
+            block['st_ctime'] = max(block['st_ctime'], int(time()))
+            block['st_mtime'] = max(block['st_mtime'], int(time()))
+            block.save()
 
-        return len(data)
+            return len(data)
 
     def _write(self, data, offset):
         startBlock = offset / self.accessor.BLOCK_SIZE
@@ -197,28 +200,29 @@ class File(BaseRecord):
         self.record.delete()
 
     def truncate(self, length, fh=None):
-        lastBlock = length / self.accessor.BLOCK_SIZE
-        l_time = int(time())
+        with self.takeLock():
+            lastBlock = length / self.accessor.BLOCK_SIZE
+            l_time = int(time())
 
-        items = self.accessor.blockTablev2.query(blockId__eq=self.record["blockId"], blockNum__gt=lastBlock, attributes=["blockId", "blockNum"])
-        for entry in items:
-            entry.delete()
+            items = self.accessor.blockTablev2.query(blockId__eq=self.record["blockId"], blockNum__gt=lastBlock, attributes=["blockId", "blockNum"])
+            for entry in items:
+                entry.delete()
 
-        if length:
-            try:
-                lastItem = self.getBlock(lastBlock, getData=True)
-                if lastItem is not None and "data" in lastItem:
-                    lastItem['data'] = Binary(lastItem['data'].value[0:(length % self.accessor.BLOCK_SIZE)])
-                    lastItem.save()
-            except FuseOSError, fe:
-                # Block is missing - so nothing to update
-                if fe.errno == ENOENT:
-                    pass
-                else:
-                    raise fe
+            if length:
+                try:
+                    lastItem = self.getBlock(lastBlock, getData=True)
+                    if lastItem is not None and "data" in lastItem:
+                        lastItem['data'] = Binary(lastItem['data'].value[0:(length % self.accessor.BLOCK_SIZE)])
+                        lastItem.save()
+                except FuseOSError, fe:
+                    # Block is missing - so nothing to update
+                    if fe.errno == ENOENT:
+                        pass
+                    else:
+                        raise fe
 
-        item = self.getFirstBlock()
-        item['st_size'] = length
-        item['st_ctime'] = max(l_time, item['st_ctime'])
-        item['st_mtime'] = max(l_time, item['st_mtime'])
-        item.save()
+            item = self.getFirstBlock()
+            item['st_size'] = length
+            item['st_ctime'] = max(l_time, item['st_ctime'])
+            item['st_mtime'] = max(l_time, item['st_mtime'])
+            item.save()

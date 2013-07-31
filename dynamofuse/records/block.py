@@ -37,13 +37,13 @@ if not hasattr(__builtins__, 'bytes'):
 
 blockCache = dict()
 blockHistory = deque()
-blockLog = logging.getLogger("dynamo-fuse-block")
+blockLog = logging.getLogger("dynamo-fuse-block ")
 
 class BlockRecord:
     BLOCK_ATTRS = ['version', "blockId", "blockNum"]
     BLOCK_ALL_ATTRS = ["data"] + BLOCK_ATTRS
 
-    log = logging.getLogger("dynamo-fuse-block")
+    log = logging.getLogger("dynamo-fuse-block ")
     item = None
     accessor = None
     path = None
@@ -59,7 +59,7 @@ class BlockRecord:
     def create(self, attrs):
         attrs["version"] = 1
         self.item = self.accessor.blockTable.new_item(attrs=attrs)
-        self.item.put()
+        self.item.put(expected_value={'blockId':False, 'blockNum':False})
         BlockRecord.cacheItem(self.path, self.item, self.item["version"])
         return self
 
@@ -92,7 +92,6 @@ class BlockRecord:
 
     @staticmethod
     def getBlockItem(accessor, path, getData=False, forUpdate=False):
-        # TODO Optimise - should not get Data if not necessary
         try:
             blockItem = accessor.blockTable.get_item(os.path.dirname(path), int(os.path.basename(path)),
                 attributes_to_get=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
