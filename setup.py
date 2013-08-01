@@ -4,6 +4,8 @@ from __future__ import with_statement
 
 from setuptools import setup
 
+import subprocess
+
 try:
     from lib2to3 import refactor
     fixers = set(refactor.get_fixers_from_package('lib2to3.fixes'))

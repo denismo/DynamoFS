@@ -69,8 +69,9 @@ class BotoExceptionMixin:
 
     def __call__(self, op, path, *args):
         try:
+            start = time.clock()
             ret = getattr(self, op)(path, *args)
-            self.log.debug("  - %s: %s", op, repr(ret))
+            self.log.debug("  - %s: %s | %s", op, repr(ret), time.clock() - start)
             if logStream:
                 logStream.flush()
             return ret
