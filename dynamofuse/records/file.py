@@ -198,6 +198,7 @@ class File(BaseRecord):
 #            self.record["st_nlink"] = 1
 
         self.record.delete()
+        self.deleted = True
 
     def truncate(self, length, fh=None):
         with self.takeLock():

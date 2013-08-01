@@ -38,6 +38,7 @@ if not hasattr(__builtins__, 'bytes'):
 blockCache = dict()
 blockHistory = deque()
 blockLog = logging.getLogger("dynamo-fuse-block ")
+BLOCK_CACHE_ENABLED=False
 
 class BlockRecord:
     BLOCK_ATTRS = ['version', "blockId", "blockNum"]
@@ -60,7 +61,7 @@ class BlockRecord:
         attrs["version"] = 1
         self.item = self.accessor.blockTable.new_item(attrs=attrs)
         self.item.put(expected_value={'blockId':False, 'blockNum':False})
-        BlockRecord.cacheItem(self.path, self.item, self.item["version"])
+        if BLOCK_CACHE_ENABLED: BlockRecord.cacheItem(self.path, self.item, self.item["version"])
         return self
 
     def __getitem__(self, key):
@@ -75,11 +76,13 @@ class BlockRecord:
 
     def save(self):
         self.item.add_attribute("version", 1)
-        # Delete this properties before they are saved into DynamoDB. They will be restored next time the item is cached
-        if "updateTime" in self.item: del self.item["updateTime"]
-        if "fullPath" in self.item: del self.item["fullPath"]
+        if BLOCK_CACHE_ENABLED:
+            # Delete this properties before they are saved into DynamoDB. They will be restored next time the item is cached
+            if "updateTime" in self.item: del self.item["updateTime"]
+            if "fullPath" in self.item: del self.item["fullPath"]
         self.item.save()
-        BlockRecord.cacheItem(self.path, self.item, self.item["version"] + 1)
+        if BLOCK_CACHE_ENABLED:
+            BlockRecord.cacheItem(self.path, self.item, self.item["version"] + 1)
 
     def writeData(self, startOffset, dataSlice):
         if "data" in self.item:
@@ -97,7 +100,7 @@ class BlockRecord:
                 attributes_to_get=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
         except DynamoDBKeyNotFoundError:
             blockItem = None
-        cachedBlockItem = BlockRecord.getCachedBlockItem(path, forUpdate)
+        cachedBlockItem = BlockRecord.getCachedBlockItem(path, forUpdate) if BLOCK_CACHE_ENABLED else None
         if not blockItem:
             if cachedBlockItem and (getData and "data" in cachedBlockItem or not getData):
                 blockLog.debug('Returning cached block item for %s', path)
@@ -105,8 +108,7 @@ class BlockRecord:
             else:
                 blockLog.debug('Unable to find block or cached block for %s', path)
                 raise FuseOSError(ENOENT)
-        if cachedBlockItem and blockItem["version"] < cachedBlockItem["version"] and (
-            getData and "data" in cachedBlockItem or not getData):
+        if cachedBlockItem and blockItem["version"] < cachedBlockItem["version"] and (getData and "data" in cachedBlockItem or not getData):
             blockLog.debug('Returning cached block item for %s', path)
             return cachedBlockItem
         else:

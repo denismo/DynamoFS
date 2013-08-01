@@ -35,10 +35,11 @@ MAX_LOCK_RETRIES = 5
 class DynamoLock:
     log = logging.getLogger("dynamo-fuse-lock  ")
 
-    def __init__(self, path, accessor):
+    def __init__(self, path, accessor, item):
         self.path = path
         self.accessor = accessor
         self.lockId = uuid.uuid4().hex
+        self.item = item
 
     def __enter__(self):
         self.log.debug(" Acquiring exclusive lock on %s", self.path)
@@ -64,9 +65,12 @@ class DynamoLock:
 
     def __exit__(self, type=None, value=None, traceback=None):
         self.log.debug(" Releasing exclusive lock on %s", self.path)
-        item = self.accessor.newItem(attrs={
-            "path": os.path.dirname(self.path),
-            "name": os.path.basename(self.path),
-        })
-        item.delete_attribute("lockOwner")
-        item.save(expected_value={'lockOwner': self.lockId})
+        if "deleted" in self.item:
+            self.log.debug(" Not saving lock - item %s was deleted", self.path)
+        else:
+            item = self.accessor.newItem(attrs={
+                "path": os.path.dirname(self.path),
+                "name": os.path.basename(self.path),
+            })
+            item.delete_attribute("lockOwner")
+            item.save(expected_value={'lockOwner': self.lockId})

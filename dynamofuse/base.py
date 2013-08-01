@@ -48,6 +48,7 @@ if not hasattr(__builtins__, 'bytes'):
 
 MAX_RETRIES = 5
 DELETED_LINKS="$deleted$"
+CONSISTENT_OPER=False
 
 def retry(m):
     def wrappedM(*args):
@@ -92,8 +93,15 @@ class BaseRecord:
         for k, v in attrs.items():
             newAttrs[k] = v
         self.log.debug("Create attrs: %s", newAttrs)
-        item = self.accessor.table.new_item(attrs=newAttrs)
-        item.put(expected_value={'name':False, 'path':False})
+        allowOverwrite = "allowOverwrite" in attrs
+        if allowOverwrite:
+            del attrs["allowOverwrite"]
+            item = self.accessor.table.new_item(attrs=newAttrs)
+            item.put()
+        else:
+            item = self.accessor.table.new_item(attrs=newAttrs)
+            item.put()
+
         self.record = item
         logging.getLogger("dynamo-fuse-record").debug("Read record %s, version %d", os.path.join(self.record["path"], self.record["name"]), self.record["version"])
         self.record.save = self.safeSave(self.record, self.record.save)
@@ -138,7 +146,7 @@ class BaseRecord:
             for attr in toDelete:
                 del attrs[attr]
         newItem = self.__class__()
-        self.log.debug("Clone item attrs:%s", attrs)
+        attrs["allowOverwrite"] = True
         newItem.create(self.accessor, path, attrs)
 
         self.updateDirectoryMTime(path)
@@ -227,13 +235,16 @@ class BaseRecord:
         return fs.getRecordOrThrow(os.path.dirname(self.path))
 
     def takeLock(self):
-        return DynamoLock(self.path, self.accessor)
+        return DynamoLock(self.path, self.accessor, self)
 
     def __getitem__(self, item):
         return self.record[item]
 
     def __setitem__(self, key, value):
         self.record[key] = value
+
+    def __contains__(self, item):
+        return self.record.__contains__(item)
 
     def save(self):
         self.record.save()

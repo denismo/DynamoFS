@@ -26,7 +26,7 @@ from dynamofuse.records.directory import Directory
 from dynamofuse.records.file import File
 from dynamofuse.records.node import Node
 from dynamofuse.records.symlink import Symlink
-from dynamofuse.base import BaseRecord, DELETED_LINKS
+from dynamofuse.base import BaseRecord, DELETED_LINKS, CONSISTENT_OPER
 from dynamofuse.records.link import Link
 from errno import *
 from os.path import realpath
@@ -106,7 +106,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
         "Link": Link
     }
 
-    def __init__(self, region, tableName):
+    def __init__(self, uri):
+        (unused, regionPath) = uri.split(':')
+        (region, tableName) = regionPath.split('/')
         self.log = logging.getLogger("dynamo-fuse-oper  ")
         self.tableName = tableName
         self.region = region
@@ -536,7 +538,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True)
+            return self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=CONSISTENT_OPER)
         except DynamoDBKeyNotFoundError:
             raise FuseOSError(ENOENT)
 
@@ -549,7 +551,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if name == "":
             name = "/"
         try:
-            return self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True)
+            return self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=CONSISTENT_OPER)
         except DynamoDBKeyNotFoundError:
             return None
 
@@ -563,7 +565,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             name = "/"
         try:
             res = self.initRecord(filepath,
-                self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=True))
+                self.table.get_item(os.path.dirname(filepath), name, attributes_to_get=attrs, consistent_read=CONSISTENT_OPER))
             if not ignoreDeleted and res.isDeleted():
                 raise FuseOSError(ENOENT)
             return res
@@ -580,7 +582,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
             name = "/"
         try:
             res = self.initRecord(path,
-                self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=True))
+                self.table.get_item(os.path.dirname(path), name, attributes_to_get=attrs, consistent_read=CONSISTENT_OPER))
             if not ignoreDeleted and res.isDeleted():
                 raise FuseOSError(ENOENT)
             return res
@@ -604,7 +606,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return res["Attributes"]["value"]
 
 
-def cleanup(region, tableName):
+def cleanup(uri):
+    (unused, regionPath) = uri.split(':')
+    (region, tableName) = regionPath.split('/')
     conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
         aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
     table = conn.get_table(tableName)
@@ -615,8 +619,8 @@ def cleanup(region, tableName):
         item.delete()
 
 if __name__ == '__main__':
-    if len(argv) != 4:
-        print('usage: %s <region> <dynamo table> <mount point>' % argv[0])
+    if len(argv) != 3:
+        print('usage: %s aws:<region>/<dynamo table> <mount point>' % argv[0])
         exit(1)
 
     logStream = open('/var/log/dynamo-fuse.log', 'w', 0)
@@ -630,12 +634,12 @@ if __name__ == '__main__':
     logging.getLogger("dynamo-fuse-master").setLevel(logging.DEBUG)
     logging.getLogger("dynamo-fuse-block ").setLevel(logging.DEBUG)
 
-    if argv[3] == "cleanup":
-        cleanup(argv[1], argv[2])
-    elif argv[3] == "createTable":
-        DynamoFS(argv[1], argv[2]).createTable()
+    if argv[2] == "cleanup":
+        cleanup(argv[1])
+    elif argv[2] == "createTable":
+        DynamoFS(argv[1]).createTable()
     else:
-        fuse = FUSE(DynamoFS(argv[1], argv[2]), argv[3], foreground=True, nothreads=True, default_permissions=False,
+        fuse = FUSE(DynamoFS(argv[1]), argv[2], foreground=True, nothreads=True, default_permissions=False,
             auto_cache=False,
             noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 
