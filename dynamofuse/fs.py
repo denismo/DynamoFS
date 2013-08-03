@@ -26,7 +26,7 @@ from dynamofuse.records.directory import Directory
 from dynamofuse.records.file import File
 from dynamofuse.records.node import Node
 from dynamofuse.records.symlink import Symlink
-from dynamofuse.base import BaseRecord, DELETED_LINKS, CONSISTENT_OPER
+from dynamofuse.base import BaseRecord, DELETED_LINKS, CONSISTENT_OPER, retry
 from dynamofuse.records.link import Link
 from errno import *
 from os.path import realpath
@@ -414,6 +414,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         return item.read(offset, size)
 
+    @retry
     def link(self, target, source):
         self.log.debug(" link(%s, %s)", target, source)
 
@@ -429,11 +430,8 @@ class DynamoFS(BotoExceptionMixin, Operations):
         self.checkAccess(os.path.dirname(target), R_OK | W_OK | X_OK)
         self.checkAccess(os.path.dirname(source), R_OK | X_OK)
 
-        try:
-            record = Link()
-            record.createRecord(self, target, {}, item)
-        except DynamoDBConditionalCheckFailedError: # Means the item already exists
-            raise FuseOSError(EEXIST)
+        # This can throw exception
+        record = Link().createRecord(self, target, {}, item)
 
         item.updateDirectoryMCTime(source)
         record.updateDirectoryMCTime(target)

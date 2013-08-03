@@ -21,9 +21,10 @@ from dynamofuse.records.block import BlockRecord
 from dynamofuse.base import BaseRecord
 from errno import  ENOENT, EINVAL, EPERM
 import os
+from errno import *
 from os.path import realpath, join, dirname, basename
 from threading import Lock
-from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError
+from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError, DynamoDBConditionalCheckFailedError
 from time import time
 from boto.dynamodb.condition import EQ, GT
 from boto.dynamodb.types import Binary
@@ -36,14 +37,18 @@ import itertools
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-# TODO Rename handling
 class Link(BaseRecord):
 
     def createRecord(self, accessor, path, attrs, link):
         self.link = link
         attrs['link'] = link.path
-        BaseRecord.create(self, accessor, path, attrs)
+        # Update link first to ensure that if the file is being modified and an exception is thrown we don't create the link record
         self.updateLink()
+        try:
+            BaseRecord.create(self, accessor, path, attrs)
+        except DynamoDBConditionalCheckFailedError:
+            raise FuseOSError(EEXIST)
+        return self
 
     def getRecord(self):
         return self.link.getRecord()

@@ -182,10 +182,6 @@ class BaseRecord:
         block['st_ctime'] = max(int(time()), block['st_ctime'])
         block.save()
 
-    def updateCTime(self):
-        self.record['st_ctime'] = max(self.record['st_ctime'], int(time()))
-        self.record.save()
-
     def updateMTime(self):
         self.record['st_mtime'] = max(self.record['st_mtime'], int(time()))
         self.record.save()

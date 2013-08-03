@@ -66,11 +66,6 @@ class File(BaseRecord):
             "blockId": self.record["blockId"], "blockNum": blockNum
         })
 
-    def updateCTime(self):
-        block = self.getFirstBlock()
-        block['st_ctime'] = max(block['st_ctime'], int(time()))
-        block.save()
-
     def getRecord(self):
         return self.record
 
@@ -78,7 +73,6 @@ class File(BaseRecord):
         return 'deleted' in self.record and self.record['deleted']
 
     def link(self):
-        # TODO: Locking? What if the file is deleted?
         block = self.getFirstBlock()
         block.add_attribute("st_nlink", 1)
         block['st_ctime'] = max(block['st_ctime'], int(time()))
