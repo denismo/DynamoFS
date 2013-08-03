@@ -96,7 +96,9 @@ class File(BaseRecord):
         block.add_attribute("st_nlink", -1)
         block['st_ctime'] = max(block['st_ctime'], int(time()))
         delete = not linked and ('deleted' in block and not block['deleted'] or not 'deleted' in block)
-        block['deleted'] = not linked or ('deleted' in block and block['deleted'])
+        setDeleted = not linked or ('deleted' in block and block['deleted'])
+        if setDeleted:
+            block['deleted'] = True
         if block["st_nlink"] == 1:
             self.log.debug("No more links - deleting records")
             items = self.accessor.blockTablev2.query(blockId__eq=self.record["blockId"], attributes=['blockId', 'blockNum'])
