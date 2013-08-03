@@ -96,7 +96,7 @@ class BlockRecord:
     @staticmethod
     def getBlockItem(accessor, path, getData=False, forUpdate=False):
         try:
-            blockItem = accessor.blockTable.get_item(os.path.dirname(path), int(os.path.basename(path)),
+            blockItem = accessor.blockTable.get_item(os.path.dirname(path), long(os.path.basename(path)),
                 attributes_to_get=(BlockRecord.BLOCK_ALL_ATTRS if getData else BlockRecord.BLOCK_ATTRS))
         except DynamoDBKeyNotFoundError:
             blockItem = None

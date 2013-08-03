@@ -51,7 +51,7 @@ class File(BaseRecord):
 
         if not "blockId" in attrs:
             attrs["blockId"] = str(self.accessor.allocUniqueId())
-            attrs["st_ino"] = int(attrs["blockId"])
+            attrs["st_ino"] = long(attrs["blockId"])
 
         BaseRecord.create(self, accessor, path, attrs)
 
@@ -83,7 +83,7 @@ class File(BaseRecord):
     def getattr(self):
         block = self.getFirstBlock()
         block["st_blocks"] = (block["st_size"] + self.record["st_blksize"] - 1) / self.record["st_blksize"]
-        block["st_ino"] = int(self.record["blockId"])
+        block["st_ino"] = long(self.record["blockId"])
         return block
 
     def delete(self, duringMove=False):
