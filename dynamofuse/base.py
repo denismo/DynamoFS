@@ -149,7 +149,12 @@ class BaseRecord:
         attrs["allowOverwrite"] = True
         newItem.create(self.accessor, path, attrs)
 
-        self.updateDirectoryMTime(path)
+        try:
+            # Don't want directory update to fail complex operation (this can be as complex as file remove)
+            self.updateDirectoryMTime(path)
+        except Exception, e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            self.log.error(" Unable to update parent dir %s due to %s", path,  "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
         return newItem
 
     def getattr(self):
