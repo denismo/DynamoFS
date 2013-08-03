@@ -61,6 +61,7 @@ if not hasattr(__builtins__, 'bytes'):
 ALL_ATTRS = None
 NAME_MAX = 255 # To match what is expected by Fuse and FSTest
 KEY_MAX = 1024
+MULTITHREADED = True
 global logStream
 
 class BotoExceptionMixin:
@@ -637,7 +638,7 @@ if __name__ == '__main__':
     elif argv[2] == "createTable":
         DynamoFS(argv[1]).createTable()
     else:
-        fuse = FUSE(DynamoFS(argv[1]), argv[2], foreground=True, nothreads=True, default_permissions=False,
+        fuse = FUSE(DynamoFS(argv[1]), argv[2], foreground=True, nothreads=not MULTITHREADED, default_permissions=False,
             auto_cache=False,
             noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 

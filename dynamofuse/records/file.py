@@ -157,7 +157,13 @@ class File(BaseRecord):
         try:
             self.log.debug("read blocks [%d .. %d]", startBlock, endBlock)
             for block in range(startBlock, endBlock+1):
-                item = self.getBlock(block, getData=True)
+                try:
+                    item = self.getBlock(block, getData=True)
+                except FuseOSError, fe:
+                    if fe.errno == ENOENT:
+                        break
+                    else:
+                        raise
                 if item is None:
                     self.log.debug("read block %d does not exist", block)
                     break
