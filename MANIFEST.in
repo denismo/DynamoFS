@@ -1,1 +1,3 @@
 include README*
+include data/mount.fuse.dynamo
+

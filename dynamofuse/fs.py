@@ -39,7 +39,7 @@ from boto.exception import DynamoDBResponseError
 from boto.dynamodb2.table import Table
 from stat import *
 from boto.dynamodb.types import Binary
-from time import time, sleep
+from time import time, sleep, clock
 from boto.dynamodb.condition import EQ, GT
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
@@ -69,9 +69,8 @@ class BotoExceptionMixin:
 
     def __call__(self, op, path, *args):
         try:
-            start = time.clock()
             ret = getattr(self, op)(path, *args)
-            self.log.debug("  - %s: %s | %s", op, repr(ret), time.clock() - start)
+            self.log.debug("  - %s: %s", op, repr(ret))
             if logStream:
                 logStream.flush()
             return ret

@@ -3,6 +3,8 @@
 from __future__ import with_statement
 
 from setuptools import setup
+from os import chmod
+import stat
 
 import subprocess
 
@@ -17,7 +19,7 @@ with open('README.md') as readme:
 
 setup(
     name = 'dynamo-fuse',
-    version = '0.1.1',
+    version = '0.1.4',
 
     description = 'Linux FUSE file system implementation with AWS DynamoDB as the storage',
     long_description = documentation,
@@ -28,6 +30,10 @@ setup(
     license = 'GNU General Public License, version 3',
     url = 'https://github.com/denismo/dynamo-fuse',
     packages=['dynamofuse', 'dynamofuse.records'],
+    requires=['fusepy(>2.0)'],
+    data_files=[
+        ('/sbin', ['data/mount.fuse.dynamo'])
+    ],
 
     use_2to3 = True,
     # only use the following fixers (everything else is already compatible)
@@ -47,3 +53,8 @@ setup(
         'Topic :: System :: Filesystems',
     ]
 )
+
+try:
+    chmod('/sbin/mount.fuse.dynamo', stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IXOTH | stat.S_IROTH)
+except:
+    pass

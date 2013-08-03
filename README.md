@@ -6,7 +6,7 @@ Linux FUSE file system implementation with AWS DynamoDB as the storage
 Installation
 ============
 
-Simply download the dynamofs.py or install it using `pip install dynamo-fuse`
+Install it using `pip install dynamo-fuse`
 
 Usage
 =====
@@ -22,7 +22,11 @@ The user with these keys must have read/write access to the specified AWS Dynamo
 
 4. Execute python command to mount the filesystem:
 
-        python -m dynamofuse.fs <aws region> <dynamo table> <mount point>
+        mount -t fuse.dynamo aws:<aws region>/<dynamo table> <mount point>
+
+    For example, if you had a table named DynamoFS in ap-southeast-2 the command would be:
+
+        mount -t fuse.dynamo aws:ap-southeast-2/DynamoFS /mnt/dynamo
 
    This will mount the table to the mount point. After that you will be able to execute normal Linux file commands, such as "ls" or "mkdir".
 
@@ -31,10 +35,10 @@ Limitations
 
 **Note**: This project is in its early R&D stage. Various designs and implementation strategies are being tried for file system operations
 so any mission-critical usage is not yet recommended. However, the implementation is already almost POSIX-compliant (only 9 out of 1957 from the [fstest](http://www.tuxera.com/community/posix-test-suite/)
- test suite are failing).
+ test suite are failing). The unsupported commands are some rarely used options of the "chmod" command.
 
 However, the behavior during concurrent access to the same files or directories by different clients (different server instances) is not well handled at the moment and may result in inconsistent results.
-Also, locking is not supported yet.
+Also, file locking (the "lock" call) is not supported yet.
 
 License
 =======
