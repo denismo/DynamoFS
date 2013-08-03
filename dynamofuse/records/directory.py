@@ -50,7 +50,7 @@ class Directory(BaseRecord):
             yield entry['name']
 
 
-    def moveTo(self, newPath):
+    def moveTo(self, newPath, forceUpdate=False):
         self.cloneItem(newPath, ['type', 'st_nlink', 'st_size', 'st_ino', 'st_mode'])
 
         self.moveDirectory(newPath)

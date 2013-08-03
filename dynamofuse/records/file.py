@@ -92,7 +92,7 @@ class File(BaseRecord):
         block["st_ino"] = int(self.record["blockId"])
         return block
 
-    def delete(self):
+    def delete(self, duringMove=False):
         with self.takeLock():
             self.deleteFile()
 

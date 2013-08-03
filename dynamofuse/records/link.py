@@ -63,8 +63,10 @@ class Link(BaseRecord):
     def updateLink(self):
         self.link.link()
 
-    def delete(self):
-        self.link.deleteFile(True)
+    def delete(self, duringMove=False):
+        # If deleting during move no need to update the n_link on file - the record is duplicated
+        if not duringMove:
+            self.link.deleteFile(True)
         BaseRecord.delete(self)
 
     def read(self, offset, size):

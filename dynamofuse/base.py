@@ -124,7 +124,7 @@ class BaseRecord:
     def getRecord(self):
         return self.record
 
-    def delete(self):
+    def delete(self, duringMove=False):
         self.record.delete()
 
         self.updateDirectoryMCTime(self.path)
@@ -132,9 +132,9 @@ class BaseRecord:
     def moveTo(self, newPath, forceUpdate=False):
         self.cloneItem(newPath)
 
-        self.delete()
+        self.delete(duringMove=True)
 
-    def cloneItem(self, path, attrsToPreserve=('type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid', 'deleted', 'blockId')):
+    def cloneItem(self, path, attrsToPreserve=('type', 'st_nlink', 'st_size', 'st_ino', 'st_dev', 'st_rdev', 'st_mode', 'blockId', 'st_gid', 'st_uid', 'deleted', 'link')):
         attrs=dict(self.record)
         del attrs['name']
         del attrs['path']
@@ -184,19 +184,16 @@ class BaseRecord:
 
     def updateCTime(self):
         self.record['st_ctime'] = max(self.record['st_ctime'], int(time()))
-        # TODO Concurrency
         self.record.save()
 
     def updateMTime(self):
         self.record['st_mtime'] = max(self.record['st_mtime'], int(time()))
-        # TODO Concurrency
         self.record.save()
 
     def updateMCTime(self):
         l_time = int(time())
         self.record['st_mtime'] = max(self.record['st_mtime'], l_time)
         self.record['st_ctime'] = max(self.record['st_mtime'], l_time)
-        # TODO Concurrency
         self.record.save()
 
     @retry
