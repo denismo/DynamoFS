@@ -107,8 +107,6 @@ class File(BaseRecord):
 
             BaseRecord.delete(self)
         else:
-#            resp = block.save(return_values='ALL_NEW')
-#            self.log.debug('After deleting: ' + str(resp))
             if delete:
                 block['st_nlink'] -= 1
                 self.moveTo(os.path.join("/" + DELETED_LINKS, uuid.uuid4().hex), forceUpdate=True)
@@ -180,21 +178,19 @@ class File(BaseRecord):
 
     def moveTo(self, newPath, forceUpdate=False):
         # Files can be hard-linked. When moved, they will update the targets of their hard-links to point to new name (as hard links are actually by name)
-        self.cloneItem(newPath)
+        with self.takeLock():
+            self.cloneItem(newPath)
 
-        # TODO: A problem - in order to perform this query we have to run it against hash_key + "link" which is impossible with current design
-        if self.record["st_nlink"] > 1 or forceUpdate:
-            self.log.debug("Retargeting links from %s to %s" % (self.path, newPath))
-            items = self.accessor.table.scan({"link":EQ(self.path)})
-            for link in items:
-                link["link"] = newPath
-                link.save()
+            # TODO: A problem - in order to perform this query we have to run it against hash_key + "link" which is impossible with current design
+            if self.record["st_nlink"] > 1 or forceUpdate:
+                self.log.debug("Retargeting links from %s to %s" % (self.path, newPath))
+                items = self.accessor.table.scan({"link":EQ(self.path)}, attributes_to_get=['name', 'path', 'link'])
+                for link in items:
+                    link["link"] = newPath
+                    link.save()
 
-            # This will force delete the block
-#            self.record["st_nlink"] = 1
-
-        self.record.delete()
-        self.deleted = True
+            self.record.delete()
+            self.getFirstBlock()['deleted'] = True
 
     def truncate(self, length, fh=None):
         with self.takeLock():

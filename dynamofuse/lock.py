@@ -40,8 +40,14 @@ class DynamoLock:
         self.accessor = accessor
         self.lockId = uuid.uuid4().hex
         self.item = item
+        self.acquired = 0
 
     def __enter__(self):
+        if self.acquired:
+            self.acquired += 1
+            self.log.debug(" Reentrant lock %d", self.acquired)
+            return
+
         self.log.debug(" Acquiring exclusive lock on %s", self.path)
         item = self.accessor.newItem(attrs={
             "path": os.path.dirname(self.path),
@@ -53,6 +59,7 @@ class DynamoLock:
             try:
                 item.save(expected_value={'lockOwner': False})
                 self.log.debug(" Got the lock on %s", self.path)
+                self.acquired += 1
                 return
             except DynamoDBConditionalCheckFailedError:
                 # Somone acquired the lock before us
@@ -64,6 +71,11 @@ class DynamoLock:
         raise FuseOSError(EAGAIN)
 
     def __exit__(self, type=None, value=None, traceback=None):
+        self.acquired -= 1
+        if self.acquired > 0:
+            self.log.debug(" Reentrant exit %d", self.acquired)
+            return
+
         self.log.debug(" Releasing exclusive lock on %s", self.path)
         if "deleted" in self.item:
             self.log.debug(" Not saving lock - item %s was deleted", self.path)

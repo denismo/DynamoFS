@@ -95,7 +95,7 @@ class BaseRecord:
         self.log.debug("Create attrs: %s", newAttrs)
         allowOverwrite = "allowOverwrite" in attrs
         if allowOverwrite:
-            del attrs["allowOverwrite"]
+            if 'allowOverwrite' in newAttrs: del newAttrs["allowOverwrite"]
             item = self.accessor.table.new_item(attrs=newAttrs)
             item.put()
         else:
@@ -228,7 +228,8 @@ class BaseRecord:
         return fs.getRecordOrThrow(os.path.dirname(self.path))
 
     def takeLock(self):
-        return DynamoLock(self.path, self.accessor, self)
+        if not hasattr(self, 'lock'): self.lock = DynamoLock(self.path, self.accessor, self)
+        return self.lock
 
     def __getitem__(self, item):
         return self.record[item]
