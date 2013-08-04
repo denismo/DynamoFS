@@ -77,7 +77,7 @@ class DynamoLock:
             return
 
         self.log.debug(" Releasing exclusive lock on %s", self.path)
-        if "deleted" in self.item:
+        if 'recordDeleted' in self.item.record:
             self.log.debug(" Not saving lock - item %s was deleted", self.path)
         else:
             item = self.accessor.newItem(attrs={

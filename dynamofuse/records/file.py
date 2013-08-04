@@ -196,7 +196,6 @@ class File(BaseRecord):
                     link.save()
 
             self.record.delete()
-            self.getFirstBlock()['deleted'] = True
 
     def truncate(self, length, fh=None):
         with self.takeLock():

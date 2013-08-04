@@ -104,7 +104,8 @@ class BaseRecord:
 
         self.record = item
         logging.getLogger("dynamo-fuse-record").debug("Read record %s, version %d", os.path.join(self.record["path"], self.record["name"]), self.record["version"])
-        self.record.save = self.safeSave(self.record, self.record.save)
+        self.record.save = BaseRecord.safeSave(self.record, self.record.save)
+        self.record.delete = BaseRecord.overrideDelete(self.record, self.record.delete)
 
     def init(self, accessor, path, record):
         self.accessor = accessor
@@ -112,6 +113,7 @@ class BaseRecord:
         self.record = record
         logging.getLogger("dynamo-fuse-record").debug("Read record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
         self.record.save = self.safeSave(self.record, self.record.save)
+        self.record.delete = BaseRecord.overrideDelete(self.record, self.record.delete)
 
     @staticmethod
     def safeSave(record, origSave):
@@ -120,6 +122,14 @@ class BaseRecord:
             record.add_attribute("version", 1)
             return origSave(expected_value={"version": record["version"]}, **kwargs)
         return safeSaveImpl
+
+    @staticmethod
+    def overrideDelete(record, origDelete):
+        def deleteImpl(**kwargs):
+            record['recordDeleted'] = True
+            logging.getLogger("dynamo-fuse-record").debug("Deleting record %s, version %d", os.path.join(record["path"], record["name"]), record["version"])
+            return origDelete(**kwargs)
+        return deleteImpl
 
     def getRecord(self):
         return self.record
