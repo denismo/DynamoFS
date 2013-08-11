@@ -17,7 +17,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
-from dynamofuse.lock import DynamoLock
+from dynamofuse.lock import DynamoLock, DynamoWriteLock, DynamoReadLock
 
 __author__ = 'Denis Mikhalkin'
 
@@ -88,7 +88,8 @@ class BaseRecord:
                     'st_mtime': l_time, 'st_atime': l_time,
                     'st_gid': gid, 'st_uid': uid,
                     'version': 1,
-                    'st_ino': attrs['st_ino'] if 'st_ino' in attrs else self.accessor.allocUniqueId()
+                    'st_ino': attrs['st_ino'] if 'st_ino' in attrs else self.accessor.allocUniqueId(),
+                    'readLock': 0
         }
         for k, v in attrs.items():
             newAttrs[k] = v
@@ -242,9 +243,16 @@ class BaseRecord:
     def getParent(self, fs):
         return fs.getRecordOrThrow(os.path.dirname(self.path))
 
-    def takeLock(self):
-        if not hasattr(self, 'lock'): self.lock = DynamoLock(self.path, self.accessor, self)
-        return self.lock
+    def writeLock(self):
+        if not hasattr(self, 'writeLockObj'): self.writeLockObj = DynamoWriteLock(self.path, self.accessor, self)
+        return self.writeLockObj
+
+    def readLock(self):
+        if not hasattr(self, 'readLockObj'): self.readLockObj = DynamoReadLock(self.path, self.accessor, self)
+        return self.readLockObj
+
+    def unlock(self):
+        DynamoReadLock.unlockStatic(self) or DynamoWriteLock.unlockStatic(self)
 
     def __getitem__(self, item):
         return self.record[item]

@@ -87,7 +87,7 @@ class File(BaseRecord):
         return block
 
     def delete(self, duringMove=False):
-        with self.takeLock():
+        with self.writeLock():
             self.deleteFile()
 
     def deleteFile(self, linked=False):
@@ -114,7 +114,7 @@ class File(BaseRecord):
                 block.save()
 
     def write(self, data, offset):
-        with self.takeLock():
+        with self.writeLock():
             self._write(data, offset)
             block = self.getFirstBlock()
             block["st_size"] = max(block["st_size"], offset + len(data))
@@ -184,7 +184,7 @@ class File(BaseRecord):
 
     def moveTo(self, newPath, forceUpdate=False):
         # Files can be hard-linked. When moved, they will update the targets of their hard-links to point to new name (as hard links are actually by name)
-        with self.takeLock():
+        with self.writeLock():
             self.cloneItem(newPath)
 
             # TODO: A problem - in order to perform this query we have to run it against hash_key + "link" which is impossible with current design
@@ -198,7 +198,7 @@ class File(BaseRecord):
             self.record.delete()
 
     def truncate(self, length, fh=None):
-        with self.takeLock():
+        with self.writeLock():
             lastBlock = length / self.accessor.BLOCK_SIZE
             l_time = int(time())
 

@@ -71,7 +71,7 @@ class Link(BaseRecord):
     def delete(self, duringMove=False):
         # If deleting during move no need to update the n_link on file - the record is duplicated
         if not duringMove:
-            with self.link.takeLock():
+            with self.link.writeLock():
                 # Lock ensures the file is exclusive. Then we delete link record - if that fails the lock is released and we can repeat.
                 # Otherwise, if record is deleted we are guaranteed to be able to delete the file
                 BaseRecord.delete(self)

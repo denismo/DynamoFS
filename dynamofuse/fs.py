@@ -62,6 +62,15 @@ ALL_ATTRS = None
 NAME_MAX = 255 # To match what is expected by Fuse and FSTest
 KEY_MAX = 1024
 MULTITHREADED = True
+F_GETLK = 5
+F_GETLK64 = 12
+F_SETLK = 6
+F_SETLK64 = 13
+F_SETLKW = 7
+F_SETLKW64 = 14
+F_RDLCK = 0
+F_WRLCK = 1
+F_UNLCK = 2
 global logStream
 
 class BotoExceptionMixin:
@@ -442,9 +451,40 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def lock(self, path, fip, cmd, lock):
         self.log.debug(" lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start,
             lock.l_len, lock.l_type)
+
+        if cmd == F_SETLK64 or cmd == F_SETLK:
+            if lock.l_type == F_RDLCK:
+                self.getRecordOrThrow(path).readLock().lock()
+            elif lock.l_type == F_WRLCK:
+                self.getRecordOrThrow(path).writeLock().lock()
+            else:
+                self.getRecordOrThrow(path).unlock()
+
+        elif cmd == F_SETLKW64 or cmd == F_SETLKW:
+            if lock.l_type == F_RDLCK:
+                self.getRecordOrThrow(path).readLock().lock(wait=True)
+            elif lock.l_type == F_WRLCK:
+                self.getRecordOrThrow(path).writeLock().lock(wait=True)
+            else:
+                raise FuseOSError(EOPNOTSUPP)
+
+        elif cmd == F_GETLK or cmd == F_GETLK64:
+            if lock.l_type == F_RDLCK:
+                lock.l_type = self.getRecordOrThrow(path).readLock().canLock()
+            elif lock.l_type == F_WRLCK:
+                lock.l_type = self.getRecordOrThrow(path).writeLock().canLock()
+            else:
+                raise FuseOSError(EOPNOTSUPP)
+
+            if lock.l_type:
+                lock.l_start = 0
+                lock.l_len = sys.maxint
+                lock.l_whence = 0
+                lock.l_pid = 0
+            else:
+                lock.l_type = F_UNLCK
+
         return 0
-        # Lock is optional if no concurrent access is expected
-        # raise FuseOSError(EOPNOTSUPP)
 
     def bmap(self, path, blocksize, idx):
         self.log.debug(" bmap(%s, blocksize=%d, idx=%d)", path, blocksize, idx)
