@@ -17,6 +17,7 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
+from dynamofuse.lock import FileLockManager, DynamoWriteLock
 
 __author__ = 'Denis Mikhalkin'
 
@@ -54,6 +55,7 @@ from boto.dynamodb2.fields import HashKey, RangeKey, KeysOnlyIndex, AllIndex, In
 from boto.dynamodb2.layer1 import DynamoDBConnection
 from boto.dynamodb2.table import Table
 from boto.dynamodb2.types import NUMBER, STRING
+import uuid
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -61,7 +63,7 @@ if not hasattr(__builtins__, 'bytes'):
 ALL_ATTRS = None
 NAME_MAX = 255 # To match what is expected by Fuse and FSTest
 KEY_MAX = 1024
-MULTITHREADED = True
+MULTITHREADED = False
 F_GETLK = 5
 F_GETLK64 = 12
 F_SETLK = 6
@@ -138,6 +140,10 @@ class DynamoFS(BotoExceptionMixin, Operations):
         except:
             self.createTable()
         self.counter = itertools.count()
+        self.counter.next() # start from 1
+
+        self.lockManager = FileLockManager()
+
         self.__createRoot()
         print "Ready"
 
@@ -213,19 +219,38 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         return record.getattr()
 
+    # TODO Lock files on open - if lock_owner is set?
     def open(self, path, flags):
         self.log.debug(" open(%s, flags=0x%x)", path, flags)
+
+        (unused, unused1, pid) = fuse_get_context()
+        self.log.debug('  - pid: %d', pid)
+
+        if hasattr(self, 'lock_owner'):
+            self.log.debug('  - lock owner %d', self.lock_owner)
+
+        if flags & os.O_EXCL:
+            self.log.debug("  - exclusive bit set")
 
         access = X_OK
         if flags & os.O_CREAT: access |= W_OK
         self.checkAccess(os.path.dirname(path), access)
-        self.checkFileExists(path)
+
+        item = self.getRecordOrThrow(path, ["type", "readLock", "writeLock", "st_mode", "st_uid", "st_gid"])
 
         access = 0
         if flags & (os.O_RDONLY | os.O_RDWR) or flags == 0: access |= R_OK
         if flags & (os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_TRUNC): access |= W_OK
 
-        self.checkAccess(path, access)
+        if not item.access(access) == 0:
+            raise FuseOSError(EACCES)
+
+        self.lockManager.create(path)
+        if type == "File" and flags & os.O_EXCL:
+            if self.lockManager.lock(path, pid):
+                item.writeLock().lock()
+            else:
+                raise FuseOSError(EBUSY)
 
         return self.allocId()
 
@@ -336,6 +361,15 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def create(self, path, mode, fh=None):
         self.log.debug(" create(%s, %d)", path, mode)
 
+        (unused, unused1, pid) = fuse_get_context()
+        self.log.debug('  - pid: %d', pid)
+
+        if hasattr(self, 'lock_owner'):
+            self.log.debug('  - lock owner %d', self.lock_owner)
+
+        if mode & os.O_EXCL:
+            self.log.debug("  - exclusive bit set")
+
         if path != "/":
             self.checkAccess(os.path.dirname(path), R_OK | X_OK | W_OK)
 
@@ -353,6 +387,13 @@ class DynamoFS(BotoExceptionMixin, Operations):
         if os.path.basename(path) == DELETED_LINKS:
             attrs['hidden'] = True
 
+        self.lockManager.create(path)
+        if type == "File" and mode & os.O_EXCL:
+            if self.lockManager.lock(path, pid):
+                DynamoWriteLock.applyLock(attrs)
+            else:
+                raise FuseOSError(EBUSY)
+
         try:
             record = self.createRecord(path, type, attrs=attrs)
         except DynamoDBConditionalCheckFailedError: # Means the item already exists
@@ -363,6 +404,14 @@ class DynamoFS(BotoExceptionMixin, Operations):
             record.updateDirectoryMCTime(path)
 
         return self.allocId()
+
+    def fsyncdir(self, path, datasync, fh):
+        return super(DynamoFS, self).fsyncdir(path, datasync, fh)
+
+    def release(self, path, fh):
+        self.log.debug(" release(%s, %d)", path, fh)
+        self.lockManager.release(path)
+        return 0
 
     def statfs(self, path):
         self.log.debug(" statfs(%s)", path)
@@ -448,23 +497,51 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
         return 0
 
+    @staticmethod
+    def lockTypeStr(type):
+        if type == F_RDLCK: return "read"
+        elif type == F_WRLCK: return "write"
+        else: return "unlock"
+
+    @staticmethod
+    def cmdStr(cmd):
+        if cmd == F_SETLK64 or cmd == F_SETLK: return "SET"
+        elif cmd == F_SETLKW64 or cmd == F_SETLKW: return "SETWAIT"
+        elif cmd == F_GETLK or cmd == F_GETLK64: return "GET"
+        else: return "UNK"
+
     def lock(self, path, fip, cmd, lock):
-        self.log.debug(" lock(%s, fip=%x, cmd=%d, lock=(start=%d, len=%d, type=%x))", path, fip, cmd, lock.l_start,
-            lock.l_len, lock.l_type)
+        self.log.debug(" lock(%s, fip=%x, cmd=%d(%s), lock=(start=%d, len=%d, type=%x(%s), pid=%d, lock_owner=%d))", path, fip, cmd, DynamoFS.cmdStr(cmd), lock.l_start,
+            lock.l_len, lock.l_type, DynamoFS.lockTypeStr(lock.l_type), lock.l_pid, getattr(self, 'lock_owner') if hasattr(self, 'lock_owner') else -1)
+
+        (uid, gid, pid) = fuse_get_context()
+        self.log.debug('  - uid: %d, gid: %d, pid: %d', uid, gid, pid)
+
+        # TODO: Needs the following: track process locks. If process makes an implicit lock calls (open, create) - apply lock
+        # IF the process makes an explicit call - lock(F_UNLCK) - check if it owns any locks.
+        # If not just ignore the call
+        # A process can only hold 1 persistent lock - no matter how many times it called lock().
+        # For SETLK, if the lock is already held don't call dynamo
+        # See http://sourceforge.net/mailarchive/forum.php?thread_name=b2397a6c1001271050y41c0164bk54ac3afa7c5aa928%40mail.gmail.com&forum_name=fuse-devel
 
         if cmd == F_SETLK64 or cmd == F_SETLK:
             if lock.l_type == F_RDLCK:
-                self.getRecordOrThrow(path).readLock().lock()
+                if self.lockManager.lock(path, pid):
+                    self.getRecordOrThrow(path).readLock().lock()
             elif lock.l_type == F_WRLCK:
-                self.getRecordOrThrow(path).writeLock().lock()
+                if self.lockManager.lock(path, pid):
+                    self.getRecordOrThrow(path).writeLock().lock()
             else:
-                self.getRecordOrThrow(path).unlock()
+                if self.lockManager.unlock(path, pid):
+                    self.getRecordOrThrow(path).unlock()
 
         elif cmd == F_SETLKW64 or cmd == F_SETLKW:
             if lock.l_type == F_RDLCK:
-                self.getRecordOrThrow(path).readLock().lock(wait=True)
+                if self.lockManager.lock(path, pid):
+                    self.getRecordOrThrow(path).readLock().lock(wait=True)
             elif lock.l_type == F_WRLCK:
-                self.getRecordOrThrow(path).writeLock().lock(wait=True)
+                if self.lockManager.lock(path, pid):
+                    self.getRecordOrThrow(path).writeLock().lock(wait=True)
             else:
                 raise FuseOSError(EOPNOTSUPP)
 

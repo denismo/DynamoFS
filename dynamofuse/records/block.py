@@ -45,13 +45,11 @@ class BlockRecord:
     BLOCK_ALL_ATTRS = ["data"] + BLOCK_ATTRS
 
     log = logging.getLogger("dynamo-fuse-block ")
-    item = None
-    accessor = None
-    path = None
 
     def __init__(self, accessor, path):
         self.accessor = accessor
         self.path = path
+        self.item = None
 
     def read(self, getData=False, forUpdate=False):
         self.item = BlockRecord.getBlockItem(self.accessor, self.path, getData, forUpdate)

@@ -67,10 +67,12 @@ def retry(m):
 
 # Note: st_mode, st_gid and st_uid are at inode level
 class BaseRecord:
-    record = None
-    accessor = None
-    path = None
     log = logging.getLogger("dynamo-fuse")
+
+    def __init__(self):
+        self.path = None
+        self.record = None
+        self.accessor = None
 
     def create(self, accessor, path, attrs):
         self.accessor = accessor
@@ -252,7 +254,7 @@ class BaseRecord:
         return self.readLockObj
 
     def unlock(self):
-        DynamoReadLock.unlockStatic(self) or DynamoWriteLock.unlockStatic(self)
+        if not DynamoReadLock.unlockStatic(self): DynamoWriteLock.unlockStatic(self)
 
     def __getitem__(self, item):
         return self.record[item]
