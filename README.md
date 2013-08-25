@@ -34,7 +34,7 @@ Limitations
 ===========
 
 **Note**: The implementation is almost POSIX-compliant (only 9 out of 1957 from the [fstest](http://www.tuxera.com/community/posix-test-suite/)
- test suite are failing). The unsupported commands are some rarely used options of the "chmod" command.
+ test suite are failing). The unsupported commands are some rarely used options of the "chown" command.
 
 License
 =======
