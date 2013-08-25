@@ -14,11 +14,13 @@
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from __future__ import with_statement
+import sys
 from boto.dynamodb.exceptions import DynamoDBConditionalCheckFailedError
+import dynamofuse
 
 __author__ = 'Denis Mikhalkin'
 
-from errno import EAGAIN, EFAULT
+from errno import EAGAIN, EFAULT, EBUSY
 from fuse import FuseOSError
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn
@@ -27,6 +29,7 @@ import cStringIO
 import uuid
 from time import time, sleep
 from threading import Lock, current_thread
+import traceback
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -98,13 +101,13 @@ class DynamoReadLock:
         self.accessor = accessor
         self.item = item
         self.acquired = 0
+        self.lockManager = dynamofuse.ioc.get(FileLockManager)
 
-    def __enter__(self):
+    def __lockImpl(self, wait):
         if self.acquired:
             self.acquired += 1
             self.log.debug("   Reentrant read lock %d", self.acquired)
             return
-
         self.log.debug("   Acquiring read lock on %s", self.path)
         item = self.accessor.newItem(attrs={
             "path": os.path.dirname(self.path),
@@ -112,7 +115,7 @@ class DynamoReadLock:
         })
         item.add_attribute('readLock', 1)
         retries = 0
-        while retries < MAX_LOCK_RETRIES or hasattr(self, 'wait'):
+        while retries < MAX_LOCK_RETRIES or wait:
             try:
                 item.save(expected_value={'writeLock': False})
                 self.log.debug(" Got the read lock on %s", self.path)
@@ -122,24 +125,41 @@ class DynamoReadLock:
                 # Somone acquired the write lock before us
                 sleep(1)
                 retries += 1
-
         self.log.debug("   CANNOT read lock %s", self.path)
-        self.__exit__()
+        #        self.__exit__()
         raise FuseOSError(EAGAIN)
 
-    def lock(self, wait=False):
+    def __enter__(self, wait=False):
+#        fs = dynamofuse.ioc.get(dynamofuse.FileSystem)
+#        return self.lock(fs.getLockOwner(), wait)
+        self.__lockImpl(wait)
+
+    def posixLock(self, lock_owner, wait=False):
+        if self.lockManager.readLock(self.path, lock_owner):
+            try:
+                self.__lockImpl(wait)
+            except Exception, e:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                self.log.error("  Unable to get read lock on %s: %s",self.path,
+                    "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+                self.lockManager.readUnlock(self.path, lock_owner)
+                raise FuseOSError(EAGAIN)
+
+    def lock_old(self, wait=False):
         if wait: self.wait = wait
         try:
             self.__enter__()
         finally:
             del self.wait
 
-    def unlock(self):
-        self.__exit__()
+    def unlock(self, lock_owner):
+        if self.lockManager.unlock(self.path, lock_owner):
+            self.__unlockImpl()
 
     @staticmethod
-    def unlockStatic(item):
-        if not 'writeLock' in item.record:
+    def unlockStatic(item, lock_owner):
+        lockManager = dynamofuse.ioc.get(FileLockManager)
+        if not 'writeLock' in item.record and lockManager.unlock(item.path, lock_owner):
             lockLog.debug('   Unlocking read lock on %s', item.path)
             newItem = item.accessor.newItem(attrs={
                 "path": os.path.dirname(item.path),
@@ -151,12 +171,11 @@ class DynamoReadLock:
         else:
             return False
 
-    def __exit__(self, type=None, value=None, traceback=None):
+    def __unlockImpl(self):
         self.acquired -= 1
         if self.acquired > 0:
             self.log.debug("   Reentrant read lock exit %d", self.acquired)
             return
-
         self.log.debug("   Releasing read lock on %s", self.path)
         if 'recordDeleted' in self.item.record:
             self.log.debug(" Not saving read lock - item %s was deleted", self.path)
@@ -168,6 +187,10 @@ class DynamoReadLock:
             item.add_attribute('readLock', -1)
             item.save()
 
+    def __exit__(self, type=None, value=None, traceback=None):
+#        fs = dynamofuse.ioc.get(dynamofuse.FileSystem)
+#        return self.unlock(fs.getLockOwner())
+        self.__unlockImpl()
 
 class DynamoWriteLock:
     log = logging.getLogger("dynamo-fuse-lock  ")
@@ -178,20 +201,34 @@ class DynamoWriteLock:
         self.item = item
         self.acquired = 0
         self.lockId = uuid.uuid4().hex
+        self.lockManager = dynamofuse.ioc.get(FileLockManager)
 
-    def lock(self, wait=False):
+    def posixLock(self, lock_owner, wait=False):
+        if self.lockManager.writeLock(self.path, lock_owner):
+            try:
+                self.__lockImpl(wait)
+                self.lockManager.updateLock(self.path, lock_owner, self.lockId)
+            except Exception, e:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                self.log.error("  Unable to get write lock on %s: %s",self.path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+                self.lockManager.unlock(self.path, lock_owner)
+
+
+    def lock_old(self, wait=False):
         if wait: self.wait = wait
         try:
             self.__enter__()
         finally:
             del self.wait
 
-    def unlock(self):
-        self.__exit__()
+    def unlock(self, lock_owner):
+        if self.lockManager.unlock(self.path, lock_owner):
+            self.__unlockImpl()
 
     @staticmethod
-    def unlockStatic(item):
-        if 'writeLock' in item.record:
+    def unlockStatic(item, lock_owner):
+        lockManager = dynamofuse.ioc.get(FileLockManager)
+        if 'writeLock' in item.record and lockManager.unlock(item.path, lock_owner):
             lockLog.debug('    Unlocking write lock on %s', item.path)
             newItem = item.accessor.newItem(attrs={
                 "path": os.path.dirname(item.path),
@@ -203,12 +240,11 @@ class DynamoWriteLock:
         else:
             return False
 
-    def __enter__(self):
+    def __lockImpl(self, wait):
         if self.acquired:
             self.acquired += 1
             self.log.debug("   Reentrant write lock %d", self.acquired)
             return
-
         self.log.debug("   Acquiring write lock on %s", self.path)
         item = self.accessor.newItem(attrs={
             "path": os.path.dirname(self.path),
@@ -216,7 +252,7 @@ class DynamoWriteLock:
         })
         item.put_attribute('writeLock', self.lockId)
         retries = 0
-        while retries < MAX_LOCK_RETRIES or hasattr(self, 'wait'):
+        while retries < MAX_LOCK_RETRIES or wait:
             try:
                 item.save(expected_value={'writeLock': False, 'readLock': 0})
                 self.log.debug("   Got the write lock on %s", self.path)
@@ -226,17 +262,31 @@ class DynamoWriteLock:
                 # Somone acquired the write lock before us
                 sleep(1)
                 retries += 1
-
         self.log.debug("   CANNOT write lock %s", self.path)
-        self.__exit__()
+        #        self.__exit__()
         raise FuseOSError(EAGAIN)
 
-    def __exit__(self, type=None, value=None, traceback=None):
+    def __enter__(self, wait=False):
+        fs = dynamofuse.ioc.get(dynamofuse.FileSystem)
+#        return self.lock(fs.getLockOwner(), wait)
+        lockManager = dynamofuse.ioc.get(FileLockManager)
+        with lockManager:
+            fileLock = lockManager.getFileLockOrNone(self.path)
+            if not fileLock:
+                self.__lockImpl(wait)
+            else:
+                with fileLock:
+                    if fileLock.hasWriteLock(fs.getLockOwner()):
+                        self.acquired += 2 # One for existing lock, one for this lock. Ensures unlock will not bother dynamo
+                        self.log.debug("   Overlapping write lock %d", self.acquired)
+                    else:
+                        self.__lockImpl(wait)
+
+    def __unlockImpl(self):
         self.acquired -= 1
         if self.acquired > 0:
             self.log.debug("   Reentrant write lock exit %d", self.acquired)
             return
-
         self.log.debug("   Releasing write lock on %s", self.path)
         if 'recordDeleted' in self.item.record:
             self.log.debug("   Not saving write lock - item %s was deleted", self.path)
@@ -248,16 +298,23 @@ class DynamoWriteLock:
             item.delete_attribute('writeLock')
             item.save(expected_value={'writeLock': self.lockId})
 
+    def __exit__(self, type=None, value=None, traceback=None):
+#        fs = dynamofuse.ioc.get(dynamofuse.FileSystem)
+#        return self.unlock(fs.getLockOwner())
+        self.__unlockImpl()
+
     @classmethod
     def applyLock(cls, attrs):
         attrs['writeLock'] = uuid.uuid4().hex
 
 
-class FileLockManager:
+class FileLockManager(object):
 
     def __init__(self):
         self.fileDict = dict()
         self.fileDictLock = Lock()
+
+
 
     def create(self, path):
         self.fileDictLock.acquire()
@@ -285,32 +342,53 @@ class FileLockManager:
             self.fileDictLock.release()
         FileLock.dump()
 
-        """Returns true if the process acquired lock, and if it should be persisted in Dynamo
-        False otherwise"""
+    def readLock(self, path, lock_owner):
+        fileLock = self.getFileLock(path)
+        with fileLock:
+            return fileLock.readLock(lock_owner)
 
-    def lock(self, path, pid):
+    def writeLock(self, path, lock_owner):
+        fileLock = self.getFileLock(path)
+        with fileLock:
+            return fileLock.writeLock(lock_owner)
+
+    def _lock(self, path, lock_owner):
         FileLock.dump()
         fileLock = self.getFileLock(path)
         try:
             with fileLock:
-                return fileLock.lock(pid)
+                return fileLock.lock(lock_owner)
         finally:
             FileLock.dump()
 
-    def unlock(self, path, pid):
+    def unlock(self, path, lock_owner):
         FileLock.dump()
         fileLock = self.getFileLock(path)
         try:
             with fileLock:
-                return fileLock.unlock(pid)
+                return fileLock.unlock(lock_owner)
         finally:
             FileLock.dump()
+
+    def updateLock(self, path, lock_owner, lockId):
+        fileLock = self.getFileLock(path)
+        with fileLock:
+            return fileLock.updateLock(lock_owner, lockId)
 
     def getFileLock(self, path):
         return self.fileDict[path]
 
+    def getFileLockOrNone(self, path):
+        return self.fileDict.get(path, None)
 
-class FileLock:
+    def __enter__(self):
+        self.fileDictLock.acquire(True)
+
+    def __exit__(self, type=None, value=None, traceback=None):
+        self.fileDictLock.release()
+
+
+class FileLock(object):
     locksHandle = None
     @classmethod
     def dump(cls):
@@ -336,23 +414,51 @@ class FileLock:
     def __exit__(self, type=None, value=None, traceback=None):
         self.__objectLock.release()
 
-    def lock(self, pid):
-        if pid in self.locks:
-            lockLog.debug("    file lock %s %d - already locked", self.path, pid)
+    def _lock(self, lock_owner):
+        if lock_owner in self.locks:
+            lockLog.debug("    file lock %s %d - already locked", self.path, lock_owner)
             return False
-        self.locks[pid] = True
-        lockLog.debug("    file lock %s %d - locking %s", self.path, pid, id(self))
+        if self.locks: # not empty?
+            raise FuseOSError(EBUSY)
+
+        self.locks[lock_owner] = True
+        lockLog.debug("    file lock %s %d - locking %s", self.path, lock_owner, id(self))
         return True
 
-    def unlock(self, pid):
-        if pid not in self.locks:
-            lockLog.debug("    file lock %s %d - not locked", self.path, pid)
+    def readLock(self, lock_owner):
+        if lock_owner in self.locks and type(self.locks[lock_owner]) == bool:
+            lockLog.debug("    file lock %s %d - already locked", self.path, lock_owner)
             return False
-        lockLog.debug("    file lock %s %d - unlocking %s", self.path, pid, id(self))
-        del self.locks[pid]
-#        if pid in self.locks: lockLog.debug("    file lock - pid %d is still there", pid)
-#        lockLog.debug("    file lock after unlock %s", self.path)
+
+        self.locks[lock_owner] = True
+        lockLog.debug("    file lock %s %d - locking %s", self.path, lock_owner, id(self))
         return True
+
+    def writeLock(self, lock_owner):
+        if lock_owner in self.locks and type(self.locks[lock_owner]) == str:
+            lockLog.debug("    file lock %s %d - already locked", self.path, lock_owner)
+            return False
+        if self.locks: # not empty?
+            raise FuseOSError(EBUSY)
+
+        self.locks[lock_owner] = ""
+        lockLog.debug("    file lock %s %d - locking %s", self.path, lock_owner, id(self))
+        return True
+
+    def hasWriteLock(self, lock_owner):
+        return lock_owner in self.locks and type(self.locks[lock_owner]) == str
+
+    def unlock(self, lock_owner):
+        if lock_owner not in self.locks:
+            lockLog.debug("    file lock %s %d - not locked", self.path, lock_owner)
+            return False
+        lockLog.debug("    file lock %s %d - unlocking %s", self.path, lock_owner, id(self))
+        del self.locks[lock_owner]
+        return True
+
+    def updateLock(self, lock_owner, lockId):
+        assert lock_owner in self.locks
+        self.locks[lock_owner] = lockId
 
     def acquire(self):
         self.counter += 1

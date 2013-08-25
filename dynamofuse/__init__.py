@@ -18,3 +18,10 @@
 
 __author__ = 'Denis Mikhalkin'
 
+ioc = None
+
+class StorageAccessor(object):
+    pass
+
+class FileSystem(object):
+    pass

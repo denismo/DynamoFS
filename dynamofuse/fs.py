@@ -17,7 +17,8 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
-from dynamofuse.lock import FileLockManager, DynamoWriteLock
+from boto.s3.multidelete import Error
+from dynamofuse.lock import FileLockManager
 
 __author__ = 'Denis Mikhalkin'
 
@@ -56,6 +57,7 @@ from boto.dynamodb2.layer1 import DynamoDBConnection
 from boto.dynamodb2.table import Table
 from boto.dynamodb2.types import NUMBER, STRING
 import uuid
+import injector
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -75,7 +77,7 @@ F_WRLCK = 1
 F_UNLCK = 2
 global logStream
 
-class BotoExceptionMixin:
+class BotoExceptionMixin(object):
     log = logging.getLogger("dynamo-fuse-oper  ")
     accessLog = logging.getLogger("dynamo-fuse-access")
 
@@ -106,8 +108,7 @@ class BotoExceptionMixin:
             self.log.error("  - %s: %s", op, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
             raise FuseOSError(EIO)
 
-
-class DynamoFS(BotoExceptionMixin, Operations):
+class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynamofuse.FileSystem):
     BLOCK_SIZE = 32768
 
     recordTypes = {
@@ -141,8 +142,6 @@ class DynamoFS(BotoExceptionMixin, Operations):
             self.createTable()
         self.counter = itertools.count()
         self.counter.next() # start from 1
-
-        self.lockManager = FileLockManager()
 
         self.__createRoot()
         print "Ready"
@@ -185,6 +184,7 @@ class DynamoFS(BotoExceptionMixin, Operations):
 
     def init(self, conn):
         self.log.debug(" init")
+        self.lockManager = dynamofuse.ioc.get(FileLockManager)
 
     def __createRoot(self):
         if not self.table.has_item("/", "/"):
@@ -246,11 +246,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
             raise FuseOSError(EACCES)
 
         self.lockManager.create(path)
-        if type == "File" and flags & os.O_EXCL:
-            if self.lockManager.lock(path, pid):
-                item.writeLock().lock()
-            else:
-                raise FuseOSError(EBUSY)
+#        if type == "File" and flags & os.O_EXCL:
+#            if self.lockManager.lock(path, pid):
+#                item.writeLock().lock()
+#            else:
+#                raise FuseOSError(EBUSY)
 
         return self.allocId()
 
@@ -388,11 +388,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
             attrs['hidden'] = True
 
         self.lockManager.create(path)
-        if type == "File" and mode & os.O_EXCL:
-            if self.lockManager.lock(path, pid):
-                DynamoWriteLock.applyLock(attrs)
-            else:
-                raise FuseOSError(EBUSY)
+#        if type == "File" and mode & os.O_EXCL:
+#            if self.lockManager.lock(path, pid):
+#                DynamoWriteLock.applyLock(attrs)
+#            else:
+#                raise FuseOSError(EBUSY)
 
         try:
             record = self.createRecord(path, type, attrs=attrs)
@@ -458,6 +458,9 @@ class DynamoFS(BotoExceptionMixin, Operations):
     def write(self, path, data, offset, fh):
         self.log.debug(" write(%s, len=%d, offset=%d)", path, len(data), offset)
 
+        (uid, gid, pid) = fuse_get_context()
+        self.log.debug('  - uid: %d, gid: %d, pid: %d, lock_owner: %d', uid, gid, pid, getattr(self, 'lock_owner') if hasattr(self, 'lock_owner') else -1)
+
         item = self.getRecordOrThrow(path)
         if not item.isFile() and not item.isHardLink():
             raise FuseOSError(EINVAL)
@@ -510,6 +513,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
         elif cmd == F_GETLK or cmd == F_GETLK64: return "GET"
         else: return "UNK"
 
+    def flock(self, path, fip, cmd):
+        self.log.debug(" flock(%s, %d, %x", path, fip, cmd)
+        return 0
+
+
     def lock(self, path, fip, cmd, lock):
         self.log.debug(" lock(%s, fip=%x, cmd=%d(%s), lock=(start=%d, len=%d, type=%x(%s), pid=%d, lock_owner=%d))", path, fip, cmd, DynamoFS.cmdStr(cmd), lock.l_start,
             lock.l_len, lock.l_type, DynamoFS.lockTypeStr(lock.l_type), lock.l_pid, getattr(self, 'lock_owner') if hasattr(self, 'lock_owner') else -1)
@@ -523,33 +531,78 @@ class DynamoFS(BotoExceptionMixin, Operations):
         # A process can only hold 1 persistent lock - no matter how many times it called lock().
         # For SETLK, if the lock is already held don't call dynamo
         # See http://sourceforge.net/mailarchive/forum.php?thread_name=b2397a6c1001271050y41c0164bk54ac3afa7c5aa928%40mail.gmail.com&forum_name=fuse-devel
-
+        lock_owner = self.getLockOwner()
         if cmd == F_SETLK64 or cmd == F_SETLK:
             if lock.l_type == F_RDLCK:
-                if self.lockManager.lock(path, pid):
-                    self.getRecordOrThrow(path).readLock().lock()
+                self.getRecordOrThrow(path).readLock().posixLock(lock_owner)
             elif lock.l_type == F_WRLCK:
-                if self.lockManager.lock(path, pid):
-                    self.getRecordOrThrow(path).writeLock().lock()
+                self.getRecordOrThrow(path).writeLock().posixLock(lock_owner)
             else:
-                if self.lockManager.unlock(path, pid):
-                    self.getRecordOrThrow(path).unlock()
+                self.getRecordOrThrow(path).posixUnlock(lock_owner)
 
         elif cmd == F_SETLKW64 or cmd == F_SETLKW:
             if lock.l_type == F_RDLCK:
-                if self.lockManager.lock(path, pid):
-                    self.getRecordOrThrow(path).readLock().lock(wait=True)
+                self.getRecordOrThrow(path).readLock().posixLock(lock_owner, wait=True)
             elif lock.l_type == F_WRLCK:
-                if self.lockManager.lock(path, pid):
-                    self.getRecordOrThrow(path).writeLock().lock(wait=True)
+                self.getRecordOrThrow(path).writeLock().posixLock(lock_owner, wait=True)
             else:
                 raise FuseOSError(EOPNOTSUPP)
 
+        # TODO Next step - refactor this into the lock objects
+#        if cmd == F_SETLK64 or cmd == F_SETLK:
+#            if lock.l_type == F_RDLCK:
+#                if self.lockManager.lock(path, lock_owner):
+#                    read_lock = self.getRecordOrThrow(path).readLock()
+#                    try:
+#                        read_lock.lock()
+#                    except Exception, e:
+#                        exc_type, exc_value, exc_traceback = sys.exc_info()
+#                        self.log.error("  Unable to get read lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+#                        self.lockManager.unlock(path, lock_owner)
+#
+#            elif lock.l_type == F_WRLCK:
+#                if self.lockManager.lock(path, lock_owner):
+#                    write_lock = self.getRecordOrThrow(path).writeLock()
+#                    try:
+#                        write_lock.lock()
+#                        self.lockManager.updateLock(path, lock_owner, write_lock.lockId)
+#                    except Exception, e:
+#                        exc_type, exc_value, exc_traceback = sys.exc_info()
+#                        self.log.error("  Unable to get write lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+#                        self.lockManager.unlock(path, lock_owner)
+#            else:
+#                if self.lockManager.unlock(path, lock_owner):
+#                    self.getRecordOrThrow(path).unlock()
+#
+#        elif cmd == F_SETLKW64 or cmd == F_SETLKW:
+#            if lock.l_type == F_RDLCK:
+#                if self.lockManager.lock(path, lock_owner):
+#                    try:
+#                        self.getRecordOrThrow(path).readLock().lock(wait=True)
+#                    except Exception, e:
+#                        exc_type, exc_value, exc_traceback = sys.exc_info()
+#                        self.log.error("  Unable to get read lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+#                        self.lockManager.unlock(path, lock_owner)
+#
+#            elif lock.l_type == F_WRLCK:
+#                if self.lockManager.lock(path, lock_owner):
+#                    path__write_lock = self.getRecordOrThrow(path).writeLock()
+#                    try:
+#                        path__write_lock.lock(wait=True)
+#                        self.lockManager.updateLock(path, lock_owner, path__write_lock.lockId)
+#                    except Exception, e:
+#                        exc_type, exc_value, exc_traceback = sys.exc_info()
+#                        self.log.error("  Unable to get write lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
+#                        self.lockManager.unlock(path, lock_owner)
+#            else:
+#                raise FuseOSError(EOPNOTSUPP)
+
         elif cmd == F_GETLK or cmd == F_GETLK64:
+            # TODO Is this right?
             if lock.l_type == F_RDLCK:
-                lock.l_type = self.getRecordOrThrow(path).readLock().canLock()
+                lock.l_type = self.getRecordOrThrow(path).readLock().canPosixLock()
             elif lock.l_type == F_WRLCK:
-                lock.l_type = self.getRecordOrThrow(path).writeLock().canLock()
+                lock.l_type = self.getRecordOrThrow(path).writeLock().canPosixLock()
             else:
                 raise FuseOSError(EOPNOTSUPP)
 
@@ -590,6 +643,11 @@ class DynamoFS(BotoExceptionMixin, Operations):
         return item.access(amode)
 
         # ============ PRIVATE ====================
+
+    def getLockOwner(self):
+        (uid, gid, pid) = fuse_get_context()
+
+        return getattr(self, 'lock_owner') if hasattr(self, 'lock_owner') else pid
 
     def checkSticky(self, old, new=None):
         (uid, gid, unused) = fuse_get_context()
@@ -734,6 +792,15 @@ def cleanup(uri):
         if item["path"] == '/' and item['name'] == DELETED_LINKS: continue
         item.delete()
 
+class DynamoFuseInjector(injector.Module):
+
+    def __init__(self, fs):
+        self.fs = fs
+
+    def configure(self, binder):
+        binder.bind(FileLockManager, to=FileLockManager())
+        binder.bind(dynamofuse.FileSystem, to=self.fs)
+
 if __name__ == '__main__':
     if len(argv) != 3:
         print('usage: %s aws:<region>/<dynamo table> <mount point>' % argv[0])
@@ -755,7 +822,9 @@ if __name__ == '__main__':
     elif argv[2] == "createTable":
         DynamoFS(argv[1]).createTable()
     else:
-        fuse = FUSE(DynamoFS(argv[1]), argv[2], foreground=True, nothreads=not MULTITHREADED, default_permissions=False,
+        dynamoFS = DynamoFS(argv[1])
+        dynamofuse.ioc = injector.Injector([DynamoFuseInjector(dynamoFS)])
+        fuse = FUSE(dynamoFS, argv[2], foreground=True, nothreads=not MULTITHREADED, default_permissions=False,
             auto_cache=False,
             noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 

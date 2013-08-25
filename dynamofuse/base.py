@@ -253,8 +253,8 @@ class BaseRecord:
         if not hasattr(self, 'readLockObj'): self.readLockObj = DynamoReadLock(self.path, self.accessor, self)
         return self.readLockObj
 
-    def unlock(self):
-        if not DynamoReadLock.unlockStatic(self): DynamoWriteLock.unlockStatic(self)
+    def posixUnlock(self, lock_owner):
+        if not DynamoReadLock.unlockStatic(self, lock_owner): DynamoWriteLock.unlockStatic(self, lock_owner)
 
     def __getitem__(self, item):
         return self.record[item]
