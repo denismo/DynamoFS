@@ -421,7 +421,7 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
             f_blocks=(sys.maxint - 1),
             f_bfree=(sys.maxint - 2),
             f_bavail=(sys.maxint - 2),
-            f_files=self.fileCount(),
+            f_files=(sys.maxint - 1),
             f_ffree=sys.maxint - 1,
             f_favail=sys.maxint - 1,
             f_fsid=0,
@@ -532,19 +532,24 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         # For SETLK, if the lock is already held don't call dynamo
         # See http://sourceforge.net/mailarchive/forum.php?thread_name=b2397a6c1001271050y41c0164bk54ac3afa7c5aa928%40mail.gmail.com&forum_name=fuse-devel
         lock_owner = self.getLockOwner()
+        record = self.getRecordOrThrow(path)
+
+        if not record.isFile():
+            raise FuseOSError(EINVAL)
+
         if cmd == F_SETLK64 or cmd == F_SETLK:
             if lock.l_type == F_RDLCK:
-                self.getRecordOrThrow(path).readLock().posixLock(lock_owner)
+                record.readLock().posixLock(lock_owner)
             elif lock.l_type == F_WRLCK:
-                self.getRecordOrThrow(path).writeLock().posixLock(lock_owner)
+                record.writeLock().posixLock(lock_owner)
             else:
-                self.getRecordOrThrow(path).posixUnlock(lock_owner)
+                record.posixUnlock(lock_owner)
 
         elif cmd == F_SETLKW64 or cmd == F_SETLKW:
             if lock.l_type == F_RDLCK:
-                self.getRecordOrThrow(path).readLock().posixLock(lock_owner, wait=True)
+                record.readLock().posixLock(lock_owner, wait=True)
             elif lock.l_type == F_WRLCK:
-                self.getRecordOrThrow(path).writeLock().posixLock(lock_owner, wait=True)
+                record.writeLock().posixLock(lock_owner, wait=True)
             else:
                 raise FuseOSError(EOPNOTSUPP)
 
@@ -600,9 +605,9 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         elif cmd == F_GETLK or cmd == F_GETLK64:
             # TODO Is this right?
             if lock.l_type == F_RDLCK:
-                lock.l_type = self.getRecordOrThrow(path).readLock().canPosixLock()
+                lock.l_type = record.readLock().canPosixLock()
             elif lock.l_type == F_WRLCK:
-                lock.l_type = self.getRecordOrThrow(path).writeLock().canPosixLock()
+                lock.l_type = record.writeLock().canPosixLock()
             else:
                 raise FuseOSError(EOPNOTSUPP)
 
