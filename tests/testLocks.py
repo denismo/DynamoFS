@@ -10,12 +10,6 @@ from subprocess import Popen
 
 class TestLocks(unittest.TestCase):
     READ_FILE = os.path.join(os.getcwd(), "test.txt")
-    @classmethod
-    def setUpClass(cls):
-        if not os.path.exists(TestLocks.READ_FILE):
-            file = open(TestLocks.READ_FILE, "w")
-            file.write("aaaa")
-            file.close()
 
     @classmethod
     def tearDownClass(cls):
@@ -23,6 +17,10 @@ class TestLocks(unittest.TestCase):
             os.unlink(TestLocks.READ_FILE)
 
     def setUp(self):
+        if not os.path.exists(TestLocks.READ_FILE):
+            file = open(TestLocks.READ_FILE, "w")
+            file.write("aaaa")
+            file.close()
         vfs = os.statvfs(TestLocks.READ_FILE)
         self.isDynamo = vfs.f_blocks == (sys.maxint-1)
 
@@ -91,12 +89,6 @@ class TestLocks(unittest.TestCase):
 
 class TestConcurrentLocks(unittest.TestCase):
     READ_FILE = os.path.join(os.getcwd(), "test.txt")
-    @classmethod
-    def setUpClass(cls):
-        if not os.path.exists(TestConcurrentLocks.READ_FILE):
-            file = open(TestConcurrentLocks.READ_FILE, "w")
-            file.write("aaaa")
-            file.close()
 
     @classmethod
     def tearDownClass(cls):
@@ -104,6 +96,10 @@ class TestConcurrentLocks(unittest.TestCase):
             os.unlink(TestConcurrentLocks.READ_FILE)
 
     def setUp(self):
+        if not os.path.exists(TestConcurrentLocks.READ_FILE):
+            file = open(TestConcurrentLocks.READ_FILE, "w")
+            file.write("aaaa")
+            file.close()
         vfs = os.statvfs(TestLocks.READ_FILE)
         self.isDynamo = vfs.f_blocks == (sys.maxint-1)
 
@@ -112,6 +108,15 @@ class TestConcurrentLocks(unittest.TestCase):
 
     def __anotherProcessWrite(self, path, lock=None):
         return self.__anotherProcessCall(path, "w+", lock)
+
+    def __anotherProcessDelete(self, path):
+        return self.__anotherProcessCall(path, "delete")
+
+    def __anotherProcessTruncate(self, path):
+        return self.__anotherProcessCall(path, "w")
+
+    def __anotherProcessRename(self, path):
+        return self.__anotherProcessCall(path, "rename")
 
     def __anotherProcessCall(self, path, mode, lock=None):
         proc = Popen(["python", os.path.dirname(sys.argv[0]) + "/fileop.py", path, mode, str(lock)])
@@ -126,7 +131,7 @@ class TestConcurrentLocks(unittest.TestCase):
             return proc.returncode
         else:
             proc.kill()
-            print "Timeout waiting for child process"
+#            print "Timeout waiting for child process"
             return -1
 
     def testConcurrentRead(self):
@@ -173,6 +178,84 @@ class TestConcurrentLocks(unittest.TestCase):
         fcntl.lockf(f, fcntl.LOCK_EX)
         f.write("a")
         self.assertEquals(-1, self.__anotherProcessWrite(TestConcurrentLocks.READ_FILE, fcntl.LOCK_EX))
+        f.close()
+
+    def testDeleteDuringRead(self):
+        f = open(TestConcurrentLocks.READ_FILE, "r")
+        self.assertIsNotNone(f.read(1))
+        self.assertEquals(0, self.__anotherProcessDelete(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testDeleteDuringReadLock(self):
+        f = open(TestConcurrentLocks.READ_FILE, "r")
+        fcntl.lockf(f, fcntl.LOCK_SH)
+        self.assertIsNotNone(f.read(1))
+        self.assertEquals(-1, self.__anotherProcessDelete(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testDeleteDuringWrite(self):
+        f = open(TestConcurrentLocks.READ_FILE, "w+")
+        f.write("a")
+        self.assertEquals(0, self.__anotherProcessDelete(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testDeleteDuringWriteLock(self):
+        f = open(TestConcurrentLocks.READ_FILE, "w+")
+        fcntl.lockf(f, fcntl.LOCK_EX)
+        f.write("a")
+        self.assertEquals(-1, self.__anotherProcessDelete(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testTruncateDuringRead(self):
+        f = open(TestConcurrentLocks.READ_FILE, "r")
+        self.assertIsNotNone(f.read(1))
+        self.assertEquals(0, self.__anotherProcessTruncate(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testTruncateDuringReadLock(self):
+        f = open(TestConcurrentLocks.READ_FILE, "r")
+        fcntl.lockf(f, fcntl.LOCK_SH)
+        self.assertIsNotNone(f.read(1))
+        self.assertEquals(-1, self.__anotherProcessTruncate(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testTruncateDuringWrite(self):
+        f = open(TestConcurrentLocks.READ_FILE, "w+")
+        f.write("a")
+        self.assertEquals(0, self.__anotherProcessTruncate(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testTruncateDuringWriteLock(self):
+        f = open(TestConcurrentLocks.READ_FILE, "w+")
+        fcntl.lockf(f, fcntl.LOCK_EX)
+        f.write("a")
+        self.assertEquals(-1, self.__anotherProcessTruncate(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testRenameDuringRead(self):
+        f = open(TestConcurrentLocks.READ_FILE, "r")
+        self.assertIsNotNone(f.read(1))
+        self.assertEquals(0, self.__anotherProcessRename(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testRenameDuringReadLock(self):
+        f = open(TestConcurrentLocks.READ_FILE, "r")
+        fcntl.lockf(f, fcntl.LOCK_SH)
+        self.assertIsNotNone(f.read(1))
+        self.assertEquals(-1, self.__anotherProcessRename(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testRenameDuringWrite(self):
+        f = open(TestConcurrentLocks.READ_FILE, "w+")
+        f.write("a")
+        self.assertEquals(0, self.__anotherProcessRename(TestConcurrentLocks.READ_FILE))
+        f.close()
+
+    def testRenameDuringWriteLock(self):
+        f = open(TestConcurrentLocks.READ_FILE, "w+")
+        fcntl.lockf(f, fcntl.LOCK_EX)
+        f.write("a")
+        self.assertEquals(-1, self.__anotherProcessRename(TestConcurrentLocks.READ_FILE))
         f.close()
 
 if __name__ == '__main__':

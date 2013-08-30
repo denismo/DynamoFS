@@ -830,7 +830,7 @@ if __name__ == '__main__':
         dynamoFS = DynamoFS(argv[1])
         dynamofuse.ioc = injector.Injector([DynamoFuseInjector(dynamoFS)])
         fuse = FUSE(dynamoFS, argv[2], foreground=True, nothreads=not MULTITHREADED, default_permissions=False,
-            auto_cache=False,
+            auto_cache=False, large_read=True, hard_remove=True,
             noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 
 
