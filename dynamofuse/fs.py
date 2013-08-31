@@ -219,7 +219,6 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
 
         return record.getattr()
 
-    # TODO Lock files on open - if lock_owner is set?
     def open(self, path, flags):
         self.log.debug(" open(%s, flags=0x%x)", path, flags)
 
@@ -246,11 +245,6 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
             raise FuseOSError(EACCES)
 
         self.lockManager.create(path)
-#        if type == "File" and flags & os.O_EXCL:
-#            if self.lockManager.lock(path, pid):
-#                item.writeLock().lock()
-#            else:
-#                raise FuseOSError(EBUSY)
 
         return self.allocId()
 
@@ -388,11 +382,6 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
             attrs['hidden'] = True
 
         self.lockManager.create(path)
-#        if type == "File" and mode & os.O_EXCL:
-#            if self.lockManager.lock(path, pid):
-#                DynamoWriteLock.applyLock(attrs)
-#            else:
-#                raise FuseOSError(EBUSY)
 
         try:
             record = self.createRecord(path, type, attrs=attrs)
@@ -525,7 +514,7 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         (uid, gid, pid) = fuse_get_context()
         self.log.debug('  - uid: %d, gid: %d, pid: %d', uid, gid, pid)
 
-        # TODO: Needs the following: track process locks. If process makes an implicit lock calls (open, create) - apply lock
+        # Track process locks. If process makes an implicit lock calls (open, create) - apply lock
         # IF the process makes an explicit call - lock(F_UNLCK) - check if it owns any locks.
         # If not just ignore the call
         # A process can only hold 1 persistent lock - no matter how many times it called lock().
@@ -552,55 +541,6 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
                 record.writeLock().posixLock(lock_owner, wait=True)
             else:
                 raise FuseOSError(EOPNOTSUPP)
-
-        # TODO Next step - refactor this into the lock objects
-#        if cmd == F_SETLK64 or cmd == F_SETLK:
-#            if lock.l_type == F_RDLCK:
-#                if self.lockManager.lock(path, lock_owner):
-#                    read_lock = self.getRecordOrThrow(path).readLock()
-#                    try:
-#                        read_lock.lock()
-#                    except Exception, e:
-#                        exc_type, exc_value, exc_traceback = sys.exc_info()
-#                        self.log.error("  Unable to get read lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
-#                        self.lockManager.unlock(path, lock_owner)
-#
-#            elif lock.l_type == F_WRLCK:
-#                if self.lockManager.lock(path, lock_owner):
-#                    write_lock = self.getRecordOrThrow(path).writeLock()
-#                    try:
-#                        write_lock.lock()
-#                        self.lockManager.updateLock(path, lock_owner, write_lock.lockId)
-#                    except Exception, e:
-#                        exc_type, exc_value, exc_traceback = sys.exc_info()
-#                        self.log.error("  Unable to get write lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
-#                        self.lockManager.unlock(path, lock_owner)
-#            else:
-#                if self.lockManager.unlock(path, lock_owner):
-#                    self.getRecordOrThrow(path).unlock()
-#
-#        elif cmd == F_SETLKW64 or cmd == F_SETLKW:
-#            if lock.l_type == F_RDLCK:
-#                if self.lockManager.lock(path, lock_owner):
-#                    try:
-#                        self.getRecordOrThrow(path).readLock().lock(wait=True)
-#                    except Exception, e:
-#                        exc_type, exc_value, exc_traceback = sys.exc_info()
-#                        self.log.error("  Unable to get read lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
-#                        self.lockManager.unlock(path, lock_owner)
-#
-#            elif lock.l_type == F_WRLCK:
-#                if self.lockManager.lock(path, lock_owner):
-#                    path__write_lock = self.getRecordOrThrow(path).writeLock()
-#                    try:
-#                        path__write_lock.lock(wait=True)
-#                        self.lockManager.updateLock(path, lock_owner, path__write_lock.lockId)
-#                    except Exception, e:
-#                        exc_type, exc_value, exc_traceback = sys.exc_info()
-#                        self.log.error("  Unable to get write lock on %s: %s",path, "".join(traceback.format_exception(exc_type, exc_value, exc_traceback)))
-#                        self.lockManager.unlock(path, lock_owner)
-#            else:
-#                raise FuseOSError(EOPNOTSUPP)
 
         elif cmd == F_GETLK or cmd == F_GETLK64:
             # TODO Is this right?
