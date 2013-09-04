@@ -38,7 +38,7 @@ Usage
    The second table must have the name of the first table with the suffix "Blocks" appended, and with Hash key named `blockId` (String) and Range key named `blockNum` (Number) (case matters).
 
 3. Define environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. At the moment only the configuration by environment variables is supported.
-The user with these keys must have read/write access to AWS Dynamo DB and the specified AWS Dynamo DB table. If the table does not exist it will automatically created.
+The user with these keys must have read/write access to AWS Dynamo DB and the specified AWS Dynamo DB table. If the tables do not exist they will be automatically created.
 
 4. Mount the filesystem:
 
@@ -48,13 +48,13 @@ The user with these keys must have read/write access to AWS Dynamo DB and the sp
 
         mount -t fuse.dynamo aws:ap-southeast-2/DynamoFS /mnt/dynamo
 
-   This will mount the table to the mount point. After that you will be able to execute normal Linux file commands, such as "ls" or "mkdir".
+   This will mount the table as a file-system to the mount point. After that you will be able to execute normal Linux file commands, such as "ls" or "mkdir".
 
 Status
 ==========
 
 The implementation is almost POSIX-compliant and has been thoroughly [tested](Testing.md). All standard Linux file system syscalls are supported apart from the following:
-- BSD-style file locks - only POSIX-style (via fcntl) locks are supported. The locks are **mandatory** by default.
+- BSD-style file locks - only POSIX-style (via fcntl) locks are supported. However the locks are **mandatory** by default.
 
 License
 =======
