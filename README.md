@@ -1,9 +1,15 @@
-dynamo-fuse
+DynamoFS
 ===========
 
 Linux FUSE file system implementation with AWS DynamoDB as the storage.
 
-dynamo-fuse provides an implementation of a network shared file system on Linux and other FUSE-compatible platforms (should work on Mac, BSD - not tested). The key aspects of this file system are:
+DynamoFS provides an implementation of a network shared file system on Linux and other FUSE-compatible platforms (should work on Mac, BSD - not tested).
+
+- It is a network file system (like NFS) in that it does not require any disk management and can be used straight away after the installation of the client but unlike traditional NFS server there are no servers to manager or fail.
+- It is a shared file system (like NFS) in that it allows many clients to mount one file system and use it concurrently but it is much more efficient in that than other shared file system as it is designed to be shared.
+- It is always available and fault tollerant (like GlusterFS) in that it replicates itself and automatically redirects request to healthy endpoints but unlike GlusterFS there are no servers to manager, and no downtime to experience in case of (silent) failure.
+
+The key aspects of this file system are:
 
 - **No servers** - the file system logic is residing on clients. All operations are translated into primitive storage access operations which are then efficiently handled by AWS DynamoDB.
   Concurrent access and locking are implemented using efficient concurrent data structures at the storage levels, most of which allow lock-free concurrent access to the underlying storage of the
@@ -21,6 +27,18 @@ without significant impact on each other. At the same time the file system ensur
 
 - **POSIX compliance** - the file system has been [tested](Testing.md) to satisfy the requirements of the POSIX specification.
 
+Usage scenarios
+===============
+
+The file system has been developed to cover the potential scenarios like this:
+
+- You've got a data center but ther storage is limited and costly. You may be planning to go to cloud or waiting for budget to get more storage.
+In the meantime you need to rapidly increase your capacity. DynamoFS can help with that by allowing you to mount the unlimited network file system either on your client
+or on your NFS server. You can start using it literally in couple of minutes (very little configuration required) and you files are always accessible in case if in future you decide to switch.
+
+- You've got an application which utilizes NFS or some other third-party file system for shared file storage but it's unstable, requires lots of maintenance and has limited capacity.
+With DynamoFS you can keep your application running as before but you get the benefits of predictable performance (tunable), fraction of maintenance time, virtually no downtime, and unlimited capacity.
+
 Installation
 ============
 
@@ -29,18 +47,28 @@ Install it using `pip install dynamo-fuse`
 Usage
 =====
 
+1. Install fuse driver:
+
+   RedHat/CentOS:
+
+        yum install fuse
+
+   Ubuntu:
+
+        apt-get install fuse
+
 1. Install python-fuse:
 
         pip install python-fuse
 
-2. (Optionally) Create 2 AWS Dynamo DB tables in the region of your choice.
+1. (Optionally) Create 2 AWS Dynamo DB tables in the region of your choice.
    The first table must have Hash key named `path` and Range key named `name` (case matters, both Strings).
    The second table must have the name of the first table with the suffix "Blocks" appended, and with Hash key named `blockId` (String) and Range key named `blockNum` (Number) (case matters).
 
-3. Define environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. At the moment only the configuration by environment variables is supported.
+1. Define environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. At the moment only the configuration by environment variables is supported.
 The user with these keys must have read/write access to AWS Dynamo DB and the specified AWS Dynamo DB table. If the tables do not exist they will be automatically created.
 
-4. Mount the filesystem:
+1. Mount the filesystem:
 
         mount -t fuse.dynamo aws:<aws region>/<dynamo table> <mount point>
 
