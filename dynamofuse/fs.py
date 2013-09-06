@@ -58,6 +58,7 @@ from boto.dynamodb2.table import Table
 from boto.dynamodb2.types import NUMBER, STRING
 import uuid
 import injector
+from boto.provider import Provider
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -129,10 +130,12 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
             if reg.name == region:
                 self.regionv2 = reg
                 break
-        self.conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
-        connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'], region=self.regionv2)
+
+        provider = Provider('aws')
+        self.conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=provider.get_access_key(),
+            aws_secret_access_key=provider.get_secret_key())
+        connection = DynamoDBConnection(aws_access_key_id=provider.get_access_key(),
+            aws_secret_access_key=provider.get_secret_key(), region=self.regionv2)
         try:
             self.table = self.conn.get_table(tableName)
             self.tablev2 = Table(tableName, connection=connection)
@@ -147,8 +150,9 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         print "Ready"
 
     def createTable(self):
-        connection = DynamoDBConnection(aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-            aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'], region=self.regionv2)
+        provider = Provider('aws')
+        connection = DynamoDBConnection(aws_access_key_id=provider.get_access_key(),
+            aws_secret_access_key=provider.get_secret_key(), region=self.regionv2)
         self.blockTablev2 = Table.create(self.tableName + "Blocks",
             schema=[
                 HashKey('blockId'),
@@ -719,17 +723,30 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         return record
 
     def allocUniqueId(self):
+        if hasattr(self, 'idLimit'):
+            if hasattr(self, 'runningId'):
+                if self.runningId + 1 < self.idLimit:
+                    self.runningId += 1
+                    return self.runningId
+                # else reached top - fallthrough
+            else:
+                self.runningId = self.idLimit - 1000
+                return self.runningId
+        # Either no limit or reached top
         idItem = self.table.new_item(attrs={'name': 'counter', 'path': 'global'})
-        idItem.add_attribute("value", 1)
+        idItem.add_attribute("value", 1000)
         res = idItem.save(return_values="ALL_NEW")
-        return res["Attributes"]["value"]
+        self.idLimit = res["Attributes"]["value"]
+        self.runningId = self.idLimit - 1000
+        return self.runningId
 
 
 def cleanup(uri):
     (unused, regionPath) = uri.split(':')
     (region, tableName) = regionPath.split('/')
-    conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
+    provider = Provider('aws')
+    conn = boto.dynamodb.connect_to_region(region, aws_access_key_id=provider.get_access_key(),
+        aws_secret_access_key=provider.get_secret_key())
     table = conn.get_table(tableName)
     for item in table.scan(attributes_to_get=["name", "path"]):
         if item["path"] == "/" and item["name"] == "/": continue
@@ -751,6 +768,7 @@ if __name__ == '__main__':
         print('usage: %s aws:<region>/<dynamo table> <mount point>' % argv[0])
         exit(1)
 
+
     logStream = open('/var/log/dynamo-fuse.log', 'w', 0)
     logging.basicConfig(stream=logStream)
     logging.getLogger("dynamo-fuse-oper  ").setLevel(logging.DEBUG)
@@ -770,7 +788,7 @@ if __name__ == '__main__':
         dynamoFS = DynamoFS(argv[1])
         dynamofuse.ioc = injector.Injector([DynamoFuseInjector(dynamoFS)])
         fuse = FUSE(dynamoFS, argv[2], foreground=True, nothreads=not MULTITHREADED, default_permissions=False,
-            auto_cache=False, large_read=True, hard_remove=True,
+            auto_cache=False, hard_remove=True,
             noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 
 

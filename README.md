@@ -65,8 +65,13 @@ Usage
    The second table must have the name of the first table with the suffix "Blocks" appended, and with Hash key named `blockId` (String) and Range key named `blockNum` (Number) (case matters).
    Or let the tables to be automatically created (the user must then have permissions for that though).
 
-1. Define environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. At the moment only the configuration by environment variables is supported.
-The user with these keys must have read/write access to AWS Dynamo DB and the specified AWS Dynamo DB table. If the tables do not exist they will be automatically created (the user must then have permissions for that though).
+1. Define AWS access keys. You have multiple options :
+   - environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+   - /etc/dynamofs.cfg (see [boto config](http://boto.readthedocs.org/en/latest/boto_config_tut.html) for format of the config file)
+   - AWS EC2 Role dynamic access key
+
+    The AWS IAM account with these keys (or AWS EC2 Role) must have read/write access to AWS Dynamo DB and the specified AWS Dynamo DB table.
+    If the tables do not exist they will be automatically created (the user must then have permissions for that though).
 
 1. Mount the filesystem:
 

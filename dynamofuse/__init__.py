@@ -18,7 +18,10 @@
 
 __author__ = 'Denis Mikhalkin'
 
+import os
+
 ioc = None
+os.environ['BOTO_CONFIG'] = '/etc/dynamofs.cfg'
 
 class StorageAccessor(object):
     pass
