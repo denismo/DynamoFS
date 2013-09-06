@@ -7,7 +7,6 @@ DynamoFS provides an implementation of a network shared file system on Linux and
 
 - It is a network file system (like NFS) in that it does not require any disk management and can be used straight away after the installation of the client but unlike traditional NFS server there are no servers to manager or fail.
 - It is a shared file system (like NFS) in that it allows many clients to mount one file system and use it concurrently but it is much more efficient in that than other shared file system as it is designed to be shared.
-- It is always available and fault tollerant (like GlusterFS) in that it replicates itself and automatically redirects request to healthy endpoints but unlike GlusterFS there are no servers to manager, and no downtime to experience in case of (silent) failure.
 
 The key aspects of this file system are:
 
@@ -34,7 +33,7 @@ The file system has been developed to cover the potential scenarios like this:
 
 - You've got a data center but ther storage is limited and costly. You may be planning to go to cloud or waiting for budget to get more storage.
 In the meantime you need to rapidly increase your capacity. DynamoFS can help with that by allowing you to mount the unlimited network file system either on your client
-or on your NFS server. You can start using it literally in couple of minutes (very little configuration required) and you files are always accessible in case if in future you decide to switch.
+or on your NFS server. You can start using it literally in a couple of minutes (very little configuration required) and your files are always accessible in case if in future you decide to switch.
 
 - You've got an application which utilizes NFS or some other third-party file system for shared file storage but it's unstable, requires lots of maintenance and has limited capacity.
 With DynamoFS you can keep your application running as before but you get the benefits of predictable performance (tunable), fraction of maintenance time, virtually no downtime, and unlimited capacity.
@@ -64,9 +63,10 @@ Usage
 1. (Optionally) Create 2 AWS Dynamo DB tables in the region of your choice.
    The first table must have Hash key named `path` and Range key named `name` (case matters, both Strings).
    The second table must have the name of the first table with the suffix "Blocks" appended, and with Hash key named `blockId` (String) and Range key named `blockNum` (Number) (case matters).
+   Or let the tables to be automatically created (the user must then have permissions for that though).
 
 1. Define environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. At the moment only the configuration by environment variables is supported.
-The user with these keys must have read/write access to AWS Dynamo DB and the specified AWS Dynamo DB table. If the tables do not exist they will be automatically created.
+The user with these keys must have read/write access to AWS Dynamo DB and the specified AWS Dynamo DB table. If the tables do not exist they will be automatically created (the user must then have permissions for that though).
 
 1. Mount the filesystem:
 
@@ -76,7 +76,8 @@ The user with these keys must have read/write access to AWS Dynamo DB and the sp
 
         mount -t fuse.dynamo aws:ap-southeast-2/DynamoFS /mnt/dynamo
 
-   This will mount the table as a file-system to the mount point. After that you will be able to execute normal Linux file commands, such as "ls" or "mkdir".
+    That's it. This will mount the shared file-system to the mount point. After that you will be able to execute normal Linux file commands, such as "ls" or "mkdir", and see the files created perhaps by
+    other file system clients.
 
 Status
 ==========
