@@ -41,11 +41,6 @@ With DynamoFS you can keep your application running as before but you get the be
 Installation
 ============
 
-Install it using `pip install dynamo-fuse`
-
-Usage
-=====
-
 1. Install fuse driver:
 
    RedHat/CentOS:
@@ -60,12 +55,19 @@ Usage
 
         pip install python-fuse
 
+2. Install dynamofs:
+
+        pip install dynamo-fuse
+
+Usage
+=====
+
 1. (Optionally) Create 2 AWS Dynamo DB tables in the region of your choice.
    The first table must have Hash key named `path` and Range key named `name` (case matters, both Strings).
    The second table must have the name of the first table with the suffix "Blocks" appended, and with Hash key named `blockId` (String) and Range key named `blockNum` (Number) (case matters).
-   Or let the tables to be automatically created (the user must then have permissions for that though).
+   Or let the tables be automatically created (the user must then have permissions for that though).
 
-1. Define AWS access keys. You have multiple options :
+1. Define AWS access keys. You have multiple options:
    - environment variables for AWS key - `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
    - /etc/dynamofs.cfg (see [boto config](http://boto.readthedocs.org/en/latest/boto_config_tut.html) for format of the config file)
    - AWS EC2 Role dynamic access key
