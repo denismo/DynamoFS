@@ -764,8 +764,8 @@ class DynamoFuseInjector(injector.Module):
         binder.bind(dynamofuse.FileSystem, to=self.fs)
 
 if __name__ == '__main__':
-    if len(argv) != 3:
-        print('usage: %s aws:<region>/<dynamo table> <mount point>' % argv[0])
+    if len(argv) != 3 and len(argv) != 4:
+        print('usage: %s aws:<region>/<dynamo table> <mount point> [mount options]' % argv[0])
         exit(1)
 
 
@@ -785,9 +785,12 @@ if __name__ == '__main__':
     elif argv[2] == "createTable":
         DynamoFS(argv[1]).createTable()
     else:
+        fg = False
+        if len(argv) == 4:
+            fg = "fg" in argv[3].split(",")
         dynamoFS = DynamoFS(argv[1])
         dynamofuse.ioc = injector.Injector([DynamoFuseInjector(dynamoFS)])
-        fuse = FUSE(dynamoFS, argv[2], foreground=True, nothreads=not MULTITHREADED, default_permissions=False,
+        fuse = FUSE(dynamoFS, argv[2], foreground=fg, nothreads=not MULTITHREADED, default_permissions=False,
             auto_cache=False, hard_remove=True,
             noauto_cache=True, kernel_cache=False, direct_io=True, allow_other=True, use_ino=True, attr_timeout=0)
 

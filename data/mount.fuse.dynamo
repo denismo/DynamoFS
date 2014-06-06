@@ -1,3 +1,9 @@
 #! /bin/bash
 
-python -m dynamofuse.fs $1 $2
+options=""
+if [ "$3" = "-o" ]
+then
+    options="$4"
+fi
+
+python -m dynamofuse.fs $1 $2 $options
