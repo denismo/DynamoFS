@@ -192,9 +192,10 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
 
     def __createRoot(self):
         if not self.table.has_item("/", "/"):
-            self.createRecord("/", "Directory", attrs={'st_mode': 0755})
+            self.createRecord("/", "Directory", attrs={'st_mode': 0755|S_IFDIR})
         if not self.table.has_item("/", DELETED_LINKS):
-            self.createRecord("/"+DELETED_LINKS, "Directory", attrs={'st_mode': 0755, 'hidden': True})
+            self.createRecord("/"+DELETED_LINKS, "Directory",
+                attrs={'st_mode': 0755|S_IFDIR, 'hidden': True})
 
     def chmod(self, path, mode):
         self.log.debug(" chmod(%s, mode=%d)", path, mode)
