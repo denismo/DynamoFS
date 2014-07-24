@@ -19,6 +19,7 @@
 from __future__ import with_statement
 from boto.s3.multidelete import Error
 from dynamofuse.lock import FileLockManager
+from dynamofuse.records.s3file import S3UploadManager
 
 __author__ = 'Denis Mikhalkin'
 
@@ -120,12 +121,14 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         "Link": Link
     }
 
-    def __init__(self, uri):
+    def __init__(self, uri, s3BaseBucket = None):
         (unused, regionPath) = uri.split(':')
         (region, tableName) = regionPath.split('/')
         self.log = logging.getLogger("dynamo-fuse-oper  ")
         self.tableName = tableName
         self.region = region
+        self.s3BaseBucket = s3BaseBucket
+        self.s3UploadManager = dynamofuse.ioc.get(S3UploadManager)
         for reg in boto.dynamodb2.regions():
             if reg.name == region:
                 self.regionv2 = reg
@@ -252,6 +255,11 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         self.lockManager.create(path)
 
         return self.allocId()
+
+    def release(self, path, fh):
+        self.log.debug(" releasing(%s)", path)
+        self.s3UploadManager.close(path)
+        return 0
 
     def utimens(self, path, times=None):
         self.log.debug(" utimens(%s)", path)
@@ -763,6 +771,7 @@ class DynamoFuseInjector(injector.Module):
     def configure(self, binder):
         binder.bind(FileLockManager, to=FileLockManager())
         binder.bind(dynamofuse.FileSystem, to=self.fs)
+        binder.bind(dynamofuse.S3UploadManager, to=S3UploadManager())
 
 if __name__ == '__main__':
     if len(argv) != 3 and len(argv) != 4:
