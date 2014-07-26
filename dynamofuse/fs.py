@@ -139,6 +139,8 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
             aws_secret_access_key=provider.get_secret_key())
         connection = DynamoDBConnection(aws_access_key_id=provider.get_access_key(),
             aws_secret_access_key=provider.get_secret_key(), region=self.regionv2)
+        self.s3Connection = boto.s3.connect_to_region(region, aws_access_key_id=provider.get_access_key(),
+                                                     aws_secret_access_key=provider.get_secret_key())
         try:
             self.table = self.conn.get_table(tableName)
             self.tablev2 = Table(tableName, connection=connection)
@@ -151,6 +153,9 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
 
         self.__createRoot()
         print "Ready"
+
+    def getS3Connection(self):
+        return self.s3Connection
 
     def createTable(self):
         provider = Provider('aws')
@@ -255,11 +260,6 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
         self.lockManager.create(path)
 
         return self.allocId()
-
-    def release(self, path, fh):
-        self.log.debug(" releasing(%s)", path)
-        self.s3UploadManager.close(path)
-        return 0
 
     def utimens(self, path, times=None):
         self.log.debug(" utimens(%s)", path)
@@ -412,6 +412,7 @@ class DynamoFS(BotoExceptionMixin, Operations, dynamofuse.StorageAccessor, dynam
 
     def release(self, path, fh):
         self.log.debug(" release(%s, %d)", path, fh)
+        self.s3UploadManager.close(path)
         self.lockManager.release(path)
         return 0
 

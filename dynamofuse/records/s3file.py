@@ -38,10 +38,9 @@ import uuid
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-# TODO: Make file look like read-only after first write
 # TODO: Eventual consistency of S3 during read
-# TODO: Parallel uploads
-# TODO: Upload manager
+# TODO: Parallel uploads http://bcbio.wordpress.com/2011/04/10/parallel-upload-to-amazon-s3-with-python-boto-and-multiprocessing/, https://gist.github.com/chrishamant/1556484
+# TODO: Implement read
 class S3File(File):
     log = logging.getLogger("dynamo-fuse-master")
 
@@ -71,12 +70,19 @@ class S3File(File):
                 block.save()
 
     def createS3Block(self):
-        uploadManager = dynamofuse.ioc.get(S3UploadManager)
-        self.conn = uploadManager.getConnection()
+        self.writeLock().__enter__(True) # Throws if erorr which will prevent any further operations
+        uploadManager = dynamofs.ioc.get(S3UploadManager)
+        conn = self.accessor.getS3Connection()
         self.bucket = conn.lookup(os.path.join(self.accessor.s3BaseBucket, os.path.dirname(self.path)))
-        self.multiPart = bucket.initiate_multipart_upload(os.path.basename(self.path))
+        self.multiPart = self.bucket.initiate_multipart_upload(os.path.basename(self.path))
         self.partNum = 0
-        uploadManager.register(self.path, self.multiPart)
+        uploadManager.register(self.path, self.multiPart, self)
+
+    def getattr(self):
+        res = File.getattr(self)
+        # Prevent write into S3 files after they are created by the initial owner
+        res['st_mode'] &= 07444
+        return res
 
     def _write(self, data, offset):
         if not hasattr(self, "multiPart"):
@@ -85,7 +91,7 @@ class S3File(File):
         upload = boto.s3.multipart.MultiPartUpload(self.bucket)
         upload.key_name = self.multiPart.key_name
         upload.id = self.multiPart.id
-        upload.upload_part_from_file(io.BytesIO(data), self.partNum+1)
+        upload.upload_part_from_file(io.BytesIO(data), self.partNum)
         self.partNum += 1
 
     def read(self, offset, size):
@@ -131,11 +137,19 @@ class S3File(File):
             item.save()
 
 class S3UploadManager(object):
+    log = logging.getLogger("dynamo-fuse-master")
+    def __init__(self):
+        self.map = dict()
+
     def close(self, path):
-        pass
+        if self.map.has_key(path):
+            uploadInfo = self.map.pop(path)
+            uploadInfo.multiPart.complete_upload()
+            uploadInfo.file.writeLock().__exit()
 
-    def register(self, path, multiPart):
-        pass
-
-    def getConnection(self):
-        pass
+    def register(self, path, multiPart, fileItem):
+        if self.map.has_key(path):
+            self.log.error("S3UploadManager already has multipart in progress for " + path)
+            raise FuseOSError(EINVAL)
+        else:
+            self.map[path] = {multiPart : multiPart, file: fileItem}
