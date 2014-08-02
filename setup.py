@@ -30,7 +30,7 @@ setup(
     license = 'GNU General Public License, version 3',
     url = 'https://github.com/denismo/dynamo-fuse',
     packages=['dynamofuse', 'dynamofuse.records'],
-    requires=['fusepy(>=2.0)', 'injector(>=0.9.0)'],
+    requires=['fusepy(>=2.0)', 'injector(>=0.9.0)', 'boto(>=2.0)'],
     data_files=[
         ('/sbin', ['data/mount.fuse.dynamo'])
     ],

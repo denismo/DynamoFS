@@ -13,6 +13,8 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+import io
+import dynamofuse
 
 __author__ = 'Denis Mikhalkin'
 
@@ -34,6 +36,9 @@ from stat import *
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
 import itertools
 import uuid
+import boto.s3
+import boto.s3.connection
+import boto.s3.multipart
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
@@ -71,8 +76,9 @@ class S3File(File):
 
     def createS3Block(self):
         self.writeLock().__enter__(True) # Throws if erorr which will prevent any further operations
-        uploadManager = dynamofs.ioc.get(S3UploadManager)
+        uploadManager = dynamofuse.ioc.get(S3UploadManager)
         conn = self.accessor.getS3Connection()
+        ''':type: boto.s3.connection.S3Connection'''
         self.bucket = conn.lookup(os.path.join(self.accessor.s3BaseBucket, os.path.dirname(self.path)))
         self.multiPart = self.bucket.initiate_multipart_upload(os.path.basename(self.path))
         self.partNum = 0
@@ -95,46 +101,29 @@ class S3File(File):
         self.partNum += 1
 
     def read(self, offset, size):
-        startBlock = offset / self.accessor.BLOCK_SIZE
-        if offset+size > self.record["st_size"]:
-            size = self.record["st_size"] - offset
-        endBlock = (offset + size - 1) / self.accessor.BLOCK_SIZE
-        data = cStringIO.StringIO()
-        try:
-            self.log.debug("read blocks [%d .. %d]", startBlock, endBlock)
-            for block in range(startBlock, endBlock+1):
-                try:
-                    item = self.getBlock(block, getData=True)
-                except FuseOSError, fe:
-                    if fe.errno == ENOENT:
-                        break
-                    else:
-                        raise
-                if item is None:
-                    self.log.debug("read block %d does not exist", block)
-                    break
-                if not "data" in item:
-                    self.log.debug("read block %d has no data", block)
-                    break
-                itemData = item["data"].value
-                writeLen = min(size, self.accessor.BLOCK_SIZE, len(itemData))
-                startOffset = (offset % self.accessor.BLOCK_SIZE) if block == startBlock else 0
-                self.log.debug("read block %d has %d data, write %d from %d", block, len(itemData), writeLen,
-                    startOffset)
-                data.write(itemData[startOffset:startOffset + writeLen])
-                size -= writeLen
-
-            return data.getvalue()
-        finally:
-            data.close()
+        #TODO Handling of file being locked by write-in-progress
+        #TODO Handling of file not being available on S3
+        self.log.debug("reading %s from S3 at %d for %d", self.path, offset, size)
+        conn = self.accessor.getS3Connection()
+        ''':type: boto.s3.connection.S3Connection'''
+        bucket = conn.get_bucket(os.path.join(self.accessor.s3BaseBucket, os.path.dirname(self.path)))
+        key = bucket.get_key(os.path.basename(self.path))
+        data = io.BytesIO()
+        key.get_contents_to_file(data, headers=dict(Range= "bytes=%d-%d" % (offset, offset+size)))
+        return data
 
     def truncate(self, length, fh=None):
+        l_time = int(time())
         with self.writeLock():
             item = self.getFirstBlock()
-            item['st_size'] = length
-            item['st_ctime'] = max(l_time, item['st_ctime'])
-            item['st_mtime'] = max(l_time, item['st_mtime'])
-            item.save()
+            if length < item['st_size']:
+                item['st_size'] = length
+                item['st_ctime'] = max(l_time, item['st_ctime'])
+                item['st_mtime'] = max(l_time, item['st_mtime'])
+                item.save()
+            else:
+                raise FuseOSError(EINVAL)
+
 
 class S3UploadManager(object):
     log = logging.getLogger("dynamo-fuse-master")
