@@ -22,7 +22,7 @@ from posix import R_OK, X_OK, W_OK
 from dynamofuse.records.block import BlockRecord
 from dynamofuse.base import BaseRecord, DELETED_LINKS
 from dynamofuse.records.file import File
-from errno import  ENOENT, EINVAL, EPERM
+from errno import  ENOENT, EINVAL, EPERM, EAGAIN
 import os
 from os.path import realpath, join, dirname, basename
 from threading import Lock
@@ -43,11 +43,12 @@ import boto.s3.multipart
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
-# TODO: Eventual consistency of S3 during read
+
 # TODO: Parallel uploads http://bcbio.wordpress.com/2011/04/10/parallel-upload-to-amazon-s3-with-python-boto-and-multiprocessing/, https://gist.github.com/chrishamant/1556484
-# TODO: Implement read
+# TODO Automatic upgrade
 class S3File(File):
     log = logging.getLogger("dynamo-fuse-master")
+    MAX_READ_RETRY_REPEAT = 10
 
     ################# OPERATIONS ##########################
 
@@ -101,16 +102,35 @@ class S3File(File):
         self.partNum += 1
 
     def read(self, offset, size):
-        #TODO Handling of file being locked by write-in-progress
-        #TODO Handling of file not being available on S3
-        self.log.debug("reading %s from S3 at %d for %d", self.path, offset, size)
-        conn = self.accessor.getS3Connection()
-        ''':type: boto.s3.connection.S3Connection'''
-        bucket = conn.get_bucket(os.path.join(self.accessor.s3BaseBucket, os.path.dirname(self.path)))
-        key = bucket.get_key(os.path.basename(self.path))
-        data = io.BytesIO()
-        key.get_contents_to_file(data, headers=dict(Range= "bytes=%d-%d" % (offset, offset+size)))
-        return data
+        repeat = 0
+        while repeat < self.MAX_READ_RETRY_REPEAT:
+            try:
+                with self.readLock():
+                    self.log.debug("reading %s from S3 at %d for %d", self.path, offset, size)
+                    conn = self.accessor.getS3Connection()
+                    ''':type: boto.s3.connection.S3Connection'''
+                    bucket = conn.get_bucket(os.path.join(self.accessor.s3BaseBucket, os.path.dirname(self.path)))
+                    key = bucket.get_key(key_name=os.path.basename(self.path), validate=True)
+                    if key is None:
+                        # Not yet available on S3
+                        self.log.debug("data not yet available on S3 for %s. Attempt %d or %d" % (self.path, repeat, self.MAX_READ_RETRY_REPEAT))
+                        repeat += 1
+                        self.spinLock()
+                        continue
+                    data = io.BytesIO()
+                    key.get_contents_to_file(data, headers=dict(Range="bytes=%d-%d" % (offset, offset+size)))
+                    return data
+            except FuseOSError, e:
+                if e.errno == EAGAIN:
+                    self.log.debug("Unable to get read lock on %s. Attempt %d of %d", (self.path, repeat, self.MAX_READ_RETRY_REPEAT))
+                    repeat += 1
+                    self.spinLock()
+                    continue
+                else:
+                    raise e
+        if repeat >= self.MAX_READ_RETRY_REPEAT:
+            # Failed to lock or too much delay on S3
+            raise FuseOSError(EAGAIN)
 
     def truncate(self, length, fh=None):
         l_time = int(time())
