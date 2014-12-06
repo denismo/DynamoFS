@@ -41,6 +41,8 @@ With DynamoFS you can keep your application running as before but you get the be
 Installation
 ============
 
+Requires Python 2.6+ (may work with 3 but not tested).
+
 1. Install fuse driver:
 
    RedHat/CentOS:
@@ -50,10 +52,6 @@ Installation
    Ubuntu:
 
         apt-get install fuse
-
-1. Install python-fuse:
-
-        pip install python-fuse
 
 2. Install dynamofs:
 
