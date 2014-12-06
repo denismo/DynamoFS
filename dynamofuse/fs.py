@@ -17,9 +17,6 @@
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import with_statement
-from boto.s3.multidelete import Error
-from dynamofuse.lock import FileLockManager
-from dynamofuse.records.s3file import S3UploadManager
 
 __author__ = 'Denis Mikhalkin'
 
@@ -31,6 +28,8 @@ from dynamofuse.records.node import Node
 from dynamofuse.records.symlink import Symlink
 from dynamofuse.base import BaseRecord, DELETED_LINKS, CONSISTENT_OPER, retry
 from dynamofuse.records.link import Link
+from dynamofuse.lock import FileLockManager
+from dynamofuse.records.s3file import S3UploadManager
 from errno import *
 from os.path import realpath
 from sys import argv, exit
@@ -39,6 +38,7 @@ import boto.dynamodb
 from boto.dynamodb.exceptions import DynamoDBKeyNotFoundError, DynamoDBConditionalCheckFailedError
 from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
+from boto.s3.multidelete import Error
 from boto.dynamodb2.table import Table
 from stat import *
 from boto.dynamodb.types import Binary

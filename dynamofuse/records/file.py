@@ -13,6 +13,7 @@
 #
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+from records.s3file import S3File
 
 __author__ = 'Denis Mikhalkin'
 
@@ -115,9 +116,22 @@ class File(BaseRecord):
 
     def write(self, data, offset):
         with self.writeLock():
-            self._write(data, offset)
-            block = self.getFirstBlock()
-            block["st_size"] = max(block["st_size"], offset + len(data))
+            if (offset + data) > self.accessor.BLOCK_SIZE:
+                # Perform upgrade to S3
+                s3File = S3File()
+                block = self.getFirstBlock()
+                # Only allow writing
+                if block["st_size"] != offset:
+                block["type"] = "S3File"
+                s3File.init(self.accessor, self.path, block)
+                existingData = self.read(0, block["st_size"])
+                s3File._write(existingData, 0)
+                s3File._write(data, offset)
+            else:
+                self._write(data, offset)
+                block = self.getFirstBlock()
+
+            block["st_size"]  = max(block["st_size"] , offset + len(data))
             block['st_ctime'] = max(block['st_ctime'], int(time()))
             block['st_mtime'] = max(block['st_mtime'], int(time()))
             block.save()
@@ -154,6 +168,7 @@ class File(BaseRecord):
             size = self.record["st_size"] - offset
         endBlock = (offset + size - 1) / self.accessor.BLOCK_SIZE
         data = cStringIO.StringIO()
+        # TODO Read lock?
         try:
             self.log.debug("read blocks [%d .. %d]", startBlock, endBlock)
             for block in range(startBlock, endBlock+1):

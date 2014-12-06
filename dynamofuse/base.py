@@ -33,7 +33,7 @@ from boto.exception import BotoServerError, BotoClientError
 from boto.exception import DynamoDBResponseError
 from stat import *
 from boto.dynamodb.types import Binary
-from time import time
+from time import time, sleep
 from boto.dynamodb.condition import EQ, GT
 import os
 from fuse import FUSE, FuseOSError, Operations, LoggingMixIn, fuse_get_context
@@ -102,6 +102,7 @@ class BaseRecord:
             item = self.accessor.table.new_item(attrs=newAttrs)
             item.put()
         else:
+            # TODO Why does this branch look the same as the other one?
             item = self.accessor.table.new_item(attrs=newAttrs)
             item.put()
 
@@ -319,6 +320,9 @@ class BaseRecord:
                 return False
 
         return True
+
+    def spinLock(self):
+        sleep(1)
 
     @retry
     def utimens(self, atime, mtime):
