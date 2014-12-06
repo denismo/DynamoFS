@@ -314,8 +314,6 @@ class FileLockManager(object):
         self.fileDict = dict()
         self.fileDictLock = Lock()
 
-
-
     def create(self, path):
         self.fileDictLock.acquire()
         FileLock.dump()
