@@ -41,6 +41,8 @@ if not hasattr(__builtins__, 'bytes'):
 # TODO: Eventual consistency of S3 during read
 # TODO: Parallel uploads http://bcbio.wordpress.com/2011/04/10/parallel-upload-to-amazon-s3-with-python-boto-and-multiprocessing/, https://gist.github.com/chrishamant/1556484
 # TODO: Implement read
+# TODO: Automatic detection of large files (first write)
+# TODO: Automatic upgrade of normal file when it goes over the first block
 class S3File(File):
     log = logging.getLogger("dynamo-fuse-master")
 
@@ -142,13 +144,13 @@ class S3UploadManager(object):
         self.map = dict()
 
     def close(self, path):
-        if self.map.has_key(path):
+        if path in self.map:
             uploadInfo = self.map.pop(path)
             uploadInfo.multiPart.complete_upload()
             uploadInfo.file.writeLock().__exit()
 
     def register(self, path, multiPart, fileItem):
-        if self.map.has_key(path):
+        if path in self.map:
             self.log.error("S3UploadManager already has multipart in progress for " + path)
             raise FuseOSError(EINVAL)
         else:
