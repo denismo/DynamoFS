@@ -21,8 +21,8 @@ file system will operate with millions of files as efficiently as with dozens.
 - **High availability** - as there are no servers to manager there is little to go down. AWS DynamoDB is a highly available redundant data storage which transparently handles failover and reroutes the requests,
 so from the file system point of view all requests are satisfied. The filesystem design is resilient to failures, with automatic retries and optimistic locking.
 
-- **Highly concurrent** - the file system lock-free design means that most of the file operations can be execited by thousands of clients (that mounted the file system) in parallel
-without significant impact on each other. At the same time the file system ensures that all concurrent operations leave the file system in a consistent state.
+- **Highly concurrent** - the file system's locking design means that most of the file operations can be executed by thousands of clients in parallel
+without significant impact on each other. At the same time the file system ensures that all concurrent operations leave the underlying data structures in a consistent state.
 
 - **POSIX compliance** - the file system has been [tested](Testing.md) to satisfy the requirements of the POSIX specification.
 
